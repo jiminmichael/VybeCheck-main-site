@@ -324,20 +324,6 @@ var app = (0, import_express.default)();
 var PORT = 3e3;
 app.use(import_express.default.json({ limit: "25mb" }));
 app.use(import_express.default.urlencoded({ extended: true, limit: "25mb" }));
-var aiClient = null;
-function getGenAI() {
-  if (!aiClient && process.env.GEMINI_API_KEY) {
-    aiClient = new import_genai.GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build"
-        }
-      }
-    });
-  }
-  return aiClient;
-}
 function mapGenre(rawGenre = "", song = "", artist = "") {
   const combined = `${rawGenre} ${song} ${artist}`.toLowerCase();
   if (combined.includes("amapiano") || combined.includes("kabza") || combined.includes("tyler icu") || combined.includes("kelvin momo") || combined.includes("young stunna") || combined.includes("focalistic") || combined.includes("musa keys") || combined.includes("txc") || combined.includes("tito m")) {
@@ -462,104 +448,82 @@ app.get("/api/music/trending", async (req, res) => {
 });
 app.post("/api/music/identify", async (req, res) => {
   try {
-    const { audioData, mimeType, sampleDescription } = req.body;
-    if (!audioData && !sampleDescription) {
-      return res.status(400).json({ error: "Please provide audio data or a sound description." });
+    const { audioData } = req.body;
+    if (!audioData) {
+      return res.status(400).json({ error: "Please provide audio data." });
     }
-    const ai = getGenAI();
-    if (!ai) {
-      return res.status(503).json({ success: false, error: "Audio recognition is unavailable because GEMINI_API_KEY is not configured on the server." });
+    const host = process.env.ACR_HOST || "identify-eu-west-1.acrcloud.com";
+    const accessKey = process.env.ACR_ACCESS_KEY;
+    const accessSecret = process.env.ACR_ACCESS_SECRET;
+    if (!accessKey || !accessSecret) {
+      console.error("CRITICAL ERROR: ACRCloud keys missing in .env");
+      return res.status(500).json({ error: "Audio recognition engine offline. Check server environment variables." });
     }
-    let recognized;
-    try {
-      const parts = [];
-      if (audioData) {
-        const cleanBase64 = audioData.includes("base64,") ? audioData.split("base64,")[1] : audioData;
-        parts.push({
-          inlineData: {
-            data: cleanBase64,
-            mimeType: mimeType || "audio/webm"
+    const cleanBase64 = audioData.replace(/^data:audio\/\w+;base64,/, "");
+    const audioBuffer = Buffer.from(cleanBase64, "base64");
+    const timestamp = Math.floor(Date.now() / 1e3).toString();
+    const signatureVersion = "1";
+    const dataType = "audio";
+    const stringToSign = ["POST", "/v1/identify", accessKey, dataType, signatureVersion, timestamp].join("\n");
+    const signature = import_crypto.default.createHmac("sha1", accessSecret).update(Buffer.from(stringToSign, "utf-8")).digest("base64");
+    const formData = new FormData();
+    formData.append("sample", new Blob([audioBuffer]), "sample.webm");
+    formData.append("sample_bytes", audioBuffer.length.toString());
+    formData.append("access_key", accessKey);
+    formData.append("data_type", dataType);
+    formData.append("signature_version", signatureVersion);
+    formData.append("signature", signature);
+    formData.append("timestamp", timestamp);
+    const acrResponse = await fetch(`https://${host}/v1/identify`, {
+      method: "POST",
+      body: formData
+    });
+    const data = await acrResponse.json();
+    if (data.status?.code === 0 && data.metadata && data.metadata.music) {
+      const track = data.metadata.music[0];
+      const songName = track.title;
+      const artistName = track.artists ? track.artists[0].name : "Unknown Artist";
+      let finalArtworkUrl = "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80";
+      let audioPreviewUrl = "";
+      let releaseYear = (/* @__PURE__ */ new Date()).getFullYear();
+      try {
+        const searchUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(`${songName} ${artistName}`)}&entity=song&limit=1`;
+        const catRes = await fetch(searchUrl);
+        if (catRes.ok) {
+          const catData = await catRes.json();
+          if (catData.results && catData.results.length > 0) {
+            finalArtworkUrl = (catData.results[0].artworkUrl100 || "").replace("100x100bb", "600x600bb");
+            audioPreviewUrl = catData.results[0].previewUrl || "";
+            if (catData.results[0].releaseDate) {
+              releaseYear = new Date(catData.results[0].releaseDate).getFullYear();
+            }
           }
-        });
+        }
+      } catch (catErr) {
+        console.warn("Could not fetch Apple Music artwork, defaulting to placeholder.");
       }
-      const promptText = `
-Listen to this audio recording / snippet very closely like Shazam or SoundHound.
-Identify the exact song playing.
-Pay special attention to Afrobeats, Amapiano, 3-Step SA House, Hip Hop, R&B, and Dancehall.
-Return ONLY a JSON object with this exact structure:
-{
-  "song": "Song Title",
-  "artist": "Artist Name",
-  "genre": "Afrobeats | Amapiano | 3 STEP SA | Afro House | Hip Hop | R&B | Dancehall | House | Electronic | Other",
-  "confidence": 92,
-  "lyricsOrHook": "Key lyrics or vocal hook heard",
-  "matchNotes": "Short explanation"
-}`;
-      if (sampleDescription) {
-        parts.push({ text: `Additional notes: ${sampleDescription}
-${promptText}` });
-      } else {
-        parts.push({ text: promptText });
-      }
-      const aiResponse = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: parts.length === 1 ? parts[0] : { parts },
-        config: {
-          responseMimeType: "application/json",
-          systemInstruction: "You are VybeCheck Audio Engine, an ultra-fast DJ and music recognition AI specialized in African and global club music."
+      return res.json({
+        success: true,
+        track: {
+          song: songName,
+          artist: artistName,
+          genre: mapGenre(track.genres ? track.genres[0].name : "", songName, artistName),
+          album: track.album ? track.album.name : "Single",
+          artworkUrl: finalArtworkUrl,
+          previewUrl: audioPreviewUrl,
+          releaseYear,
+          confidence: track.score || 100,
+          matchNotes: "Acoustic fingerprint matched perfectly."
         }
       });
-      const rawText = aiResponse.text || "{}";
-      const parsed = JSON.parse(rawText);
-      recognized = {
-        song: parsed.song || "Identified Track",
-        artist: parsed.artist || "Unknown Artist",
-        genre: mapGenre(parsed.genre, parsed.song, parsed.artist),
-        confidence: typeof parsed.confidence === "number" ? parsed.confidence : 88,
-        lyricsOrHook: parsed.lyricsOrHook || "",
-        matchNotes: parsed.matchNotes || "Acoustic fingerprint matched with high precision"
-      };
-    } catch (geminiErr) {
-      console.error("Gemini Audio identification error:", geminiErr.message);
-      return res.status(502).json({ success: false, error: `Audio recognition failed: ${geminiErr.message}` });
     }
-    let enrichedTrack = null;
-    try {
-      const searchUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(`${recognized.song} ${recognized.artist}`)}&entity=song&limit=3&media=music`;
-      const catRes = await fetch(searchUrl);
-      if (catRes.ok) {
-        const catData = await catRes.json();
-        if (catData.results && catData.results.length > 0) {
-          const top = catData.results[0];
-          enrichedTrack = {
-            song: top.trackName || recognized.song,
-            artist: top.artistName || recognized.artist,
-            genre: mapGenre(top.primaryGenreName || recognized.genre, top.trackName, top.artistName),
-            album: top.collectionName || "",
-            artworkUrl: (top.artworkUrl100 || "").replace("100x100bb", "600x600bb"),
-            previewUrl: top.previewUrl || "",
-            releaseYear: top.releaseDate ? new Date(top.releaseDate).getFullYear() : void 0
-          };
-        }
-      }
-    } catch (catErr) {
-      console.warn("Catalog enrichment failed:", catErr);
-    }
-    const finalResult = {
-      song: enrichedTrack?.song || recognized.song,
-      artist: enrichedTrack?.artist || recognized.artist,
-      genre: enrichedTrack?.genre || recognized.genre,
-      album: enrichedTrack?.album || "",
-      artworkUrl: enrichedTrack?.artworkUrl || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80",
-      previewUrl: enrichedTrack?.previewUrl || "",
-      releaseYear: enrichedTrack?.releaseYear || 2024,
-      confidence: recognized.confidence,
-      lyricsOrHook: recognized.lyricsOrHook,
-      matchNotes: recognized.matchNotes
-    };
-    return res.json({ success: true, track: finalResult });
+    return res.status(400).json({
+      success: false,
+      error: "No match found. The club might be too loud, get closer to the speaker."
+    });
   } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
+    console.error("ACRCloud error:", error.message);
+    return res.status(500).json({ success: false, error: "Internal server error processing audio." });
   }
 });
 app.get("/api/djs", async (req, res) => {
