@@ -1,0 +1,6 @@
+{
+  "name": "VybeCheckwithBama - The Request Hub",
+  "description": "Live DJ song-request platform with real-time song search suggestions, AI audio music recognition, VIP Paystack tipping, and DJ queue dashboard.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
