@@ -141,11 +141,11 @@ export default function App() {
   const unreadNotifications = notifications.filter((n) => !n.read).slice(0, 3);
 
   if (!backendReady && backendError) {
-    return <div className="min-h-screen bg-[#070708] text-[#F5F2ED] flex flex-col items-center justify-center gap-3 px-6 text-center"><strong>Supabase connection failed</strong><span className="text-sm text-[#8F8C88]">{backendError}</span></div>;
+    return <div className="min-h-screen bg-[#070708] text-[#F5F2ED] flex flex-col items-center justify-center gap-3 px-6 text-center relative"><div className="bg-atmosphere" /><div className="relative z-10 flex flex-col items-center gap-3"><strong>Supabase connection failed</strong><span className="text-sm text-[#8F8C88]">{backendError}</span></div></div>;
   }
 
   if (!backendReady) {
-    return <div className="min-h-screen bg-[#070708] text-[#F5F2ED] flex items-center justify-center">Connecting to Supabase...</div>;
+    return <div className="min-h-screen bg-[#070708] text-[#F5F2ED] flex items-center justify-center relative"><div className="bg-atmosphere" /><span className="relative z-10">Connecting to Supabase...</span></div>;
   }
 
   if (store.getEvents().length === 0) {
