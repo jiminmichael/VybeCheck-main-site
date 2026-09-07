@@ -47,7 +47,7 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
   onTrackRequest,
   onLaunchPaystack,
 }) => {
-  const [currentEvent, setCurrentEvent] = useState<EventItem>(store.getCurrentEvent());
+  const [currentEvent, setCurrentEvent] = useState<EventItem | undefined>(store.getCurrentEvent());
 
   // Form State
   const [song, setSong] = useState('');
@@ -179,6 +179,11 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
 
     if (!song.trim()) {
       setErrorMessage('Please enter a song title or search an artist.');
+      return;
+    }
+
+    if (!currentEvent) {
+      setErrorMessage('Preparing the live session. Please try again shortly.');
       return;
     }
 
@@ -482,7 +487,7 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
           <button
             type="button"
             onClick={() => handleSubmit()}
-            disabled={isSubmitting || !currentEvent.requestsEnabled}
+            disabled={isSubmitting || !currentEvent?.requestsEnabled}
             className="btn btn-primary btn-full"
           >
             {isSubmitting ? 'Sending Request...' : 'Send Request'}

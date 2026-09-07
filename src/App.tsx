@@ -47,11 +47,8 @@ export default function App() {
   const [backendReady, setBackendReady] = useState<boolean>(store.isReady());
   const [backendError, setBackendError] = useState<string | null>(store.getInitializationError());
 
-  // Loading Screen Timer
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setLoading(false);
-    }, 1800);
+    const timer = setTimeout(() => setLoading(false), 1800);
     return () => clearTimeout(timer);
   }, []);
 
@@ -140,15 +137,7 @@ export default function App() {
 
   const unreadNotifications = notifications.filter((n) => !n.read).slice(0, 3);
 
-  if (!backendReady && backendError) {
-    return <div className="min-h-screen bg-[#070708] text-[#F5F2ED] flex flex-col items-center justify-center gap-3 px-6 text-center relative"><div className="bg-atmosphere" /><div className="relative z-10 flex flex-col items-center gap-3"><strong>Supabase connection failed</strong><span className="text-sm text-[#8F8C88]">{backendError}</span></div></div>;
-  }
-
-  if (!backendReady) {
-    return <div className="min-h-screen bg-[#070708] text-[#F5F2ED] flex items-center justify-center relative"><div className="bg-atmosphere" /><span className="relative z-10">Connecting to Supabase...</span></div>;
-  }
-
-  if (store.getEvents().length === 0) {
+  if (backendReady && !backendError && store.getEvents().length === 0) {
     return (
       <div className="min-h-screen bg-[#070708] text-[#F5F2ED] flex flex-col font-['Inter',sans-serif] relative">
         <div className="bg-atmosphere" />
