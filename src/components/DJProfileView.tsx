@@ -113,6 +113,7 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
     const unsub = store.subscribe(() => {
       setIsAuthenticated(store.isAuthenticatedDJ());
       setCurrentDJ(store.getCurrentDJ());
+      setPayouts([...store.getPayouts()]);
     });
 
     store.getPayoutHistory().then((history) => {
@@ -134,9 +135,9 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
       setDefaultVenue(currentDJ.defaultVenue || '');
       setAvatarUrl(currentDJ.avatarUrl || '');
       setCoverUrl(currentDJ.coverUrl || '');
-      setBankName(currentDJ.bankName || 'Guaranty Trust Bank (GTBank)');
-      setBankCode(currentDJ.bankCode || '058');
-      setAccountNumber(currentDJ.accountNumber || '0124892019');
+      setBankName(currentDJ.bankName || '');
+      setBankCode(currentDJ.bankCode || '');
+      setAccountNumber(currentDJ.accountNumber || '');
       setAccountName(currentDJ.accountName || currentDJ.name);
       setMinTipAmount(currentDJ.minTipAmount || 10000);
       setSelectedGenres(currentDJ.genres || ['Afrobeats', 'Amapiano']);
@@ -192,6 +193,7 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
       avatarUrl: avatarUrl.trim(),
       coverUrl: coverUrl.trim(),
       bankName: bankName.trim(),
+      bankCode,
       accountNumber: accountNumber.trim(),
       accountName: accountName.trim(),
       minTipAmount: Number(minTipAmount) || 10000,
@@ -607,6 +609,7 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
                       }}
                       className="form-input"
                     >
+                      <option value="">Select a bank</option>
                       {banks.map((b) => (
                         <option key={b.code} value={b.code}>
                           {b.name}

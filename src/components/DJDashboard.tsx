@@ -241,7 +241,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
             </span>
           </div>
           <span className="font-['Syne'] text-2xl sm:text-3xl font-bold text-[#E6D3A3] mt-2 leading-none truncate group-hover:scale-[1.02] transition-transform">
-            {formatCurrency(currentDJ?.availableBalance || totalTipsNaira)}
+            {formatCurrency(currentDJ?.availableBalance ?? 0)}
           </span>
         </div>
       </div>

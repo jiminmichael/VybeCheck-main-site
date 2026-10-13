@@ -291,10 +291,10 @@ class Store {
     try {
       const request = this.getRequestByToken(requestIdOrToken);
       if (!request) return false;
-      await api('/api/payments/verify', { reference, requestId: request.id });
+      const result = await api('/api/payments/verify', { reference, requestId: request.id });
       await this.trackRequest(request.trackingToken);
       soundEngine.play('tipReceived');
-      return true;
+      return { amount: result.amount, reference, priority: this.getRequestByToken(request.id)?.priority === true };
     } catch { return false; }
   }
   public verifyTipPayment(token: string, amount: number, reference?: string) { return reference ? this.verifyPayment(reference, token, amount) : Promise.resolve(false); }
@@ -326,6 +326,7 @@ class Store {
       return result;
     } catch (error) { return { success: false, error: errorMessage(error) }; }
   }
+  public getPayouts() { return this.payouts; }
   public async getPayoutHistory() { return this.payouts; }
   public async getWalletInfo(): Promise<DJWalletInfo> { return { availableBalance: this.ownDJ?.availableBalance || 0, totalTipsEarned: this.ownDJ?.totalTipsEarned || 0, totalWithdrawn: this.ownDJ?.totalWithdrawn || 0, payouts: this.payouts }; }
   public getStats() {
