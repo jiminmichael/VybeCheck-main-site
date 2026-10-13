@@ -28,32 +28,6 @@ var import_vite = require("vite");
 // server/app.ts
 var import_node_crypto2 = __toESM(require("node:crypto"), 1);
 var import_express2 = __toESM(require("express"), 1);
-var import_genai = require("@google/genai");
-var import_config = require("dotenv/config");
-
-// server/firebaseRoutes.ts
-var import_express = require("express");
-var import_node_crypto = __toESM(require("node:crypto"), 1);
-var import_firestore2 = require("firebase-admin/firestore");
-
-// server/firebase.ts
-var import_app = require("firebase-admin/app");
-var import_auth = require("firebase-admin/auth");
-var import_firestore = require("firebase-admin/firestore");
-function adminApp() {
-  if ((0, import_app.getApps)().length) return (0, import_app.getApps)()[0];
-  const projectId = process.env.FIREBASE_PROJECT_ID || "vybecheck-6a8b7";
-  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  return (0, import_app.initializeApp)({
-    projectId,
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "vybecheck-6a8b7.firebasestorage.app",
-    ...process.env.FIRESTORE_EMULATOR_HOST ? {} : {
-      credential: serviceAccount ? (0, import_app.cert)(JSON.parse(serviceAccount)) : (0, import_app.applicationDefault)()
-    }
-  });
-}
-var adminAuth = () => (0, import_auth.getAuth)(adminApp());
-var firestore = () => (0, import_firestore.getFirestore)(adminApp());
 
 // server/domain.ts
 var HttpError = class extends Error {
@@ -117,6 +91,54 @@ function validateVerifiedPayment(payment, verified) {
   }
 }
 
+// server/audio.ts
+function decodeAudioDataUrl(value) {
+  if (typeof value !== "string") throw new HttpError(400, "Upload a valid audio recording.");
+  const match = /^data:(audio\/[a-z0-9.+-]+)(?:;[^,]*)?;base64,([A-Za-z0-9+/]*={0,2})$/i.exec(value);
+  if (!match) throw new HttpError(400, "Upload a valid base64 audio recording.");
+  const mimeType = match[1].toLowerCase();
+  const extensions = { "audio/webm": "webm", "audio/mp4": "mp4", "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/ogg": "ogg", "audio/wav": "wav", "audio/x-wav": "wav", "audio/aac": "aac", "audio/flac": "flac" };
+  if (!extensions[mimeType]) throw new HttpError(400, "Choose a WebM, MP4, MP3, Ogg, WAV, AAC, or FLAC recording.");
+  const buffer = Buffer.from(match[2], "base64");
+  if (!buffer.length || buffer.length > 15 * 1024 * 1024 || buffer.toString("base64").replace(/=+$/, "") !== match[2].replace(/=+$/, "")) throw new HttpError(400, "Audio must be valid and smaller than 15 MB.");
+  return { buffer, mimeType, filename: `sample.${extensions[mimeType]}` };
+}
+
+// server/app.ts
+var import_config = require("dotenv/config");
+
+// src/services/queue.ts
+function compareQueue(a, b) {
+  return Number(b.status === "up_next") - Number(a.status === "up_next") || Number(b.priority) - Number(a.priority) || a.queuePosition - b.queuePosition || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+}
+function activeQueue(requests) {
+  return requests.filter((r) => r.status === "pending" || r.status === "up_next").sort(compareQueue);
+}
+
+// server/firebaseRoutes.ts
+var import_express = require("express");
+var import_node_crypto = __toESM(require("node:crypto"), 1);
+var import_firestore2 = require("firebase-admin/firestore");
+
+// server/firebase.ts
+var import_app = require("firebase-admin/app");
+var import_auth = require("firebase-admin/auth");
+var import_firestore = require("firebase-admin/firestore");
+function adminApp() {
+  if ((0, import_app.getApps)().length) return (0, import_app.getApps)()[0];
+  const projectId = process.env.FIREBASE_PROJECT_ID || "vybecheck-6a8b7";
+  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  return (0, import_app.initializeApp)({
+    projectId,
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "vybecheck-6a8b7.firebasestorage.app",
+    ...process.env.FIRESTORE_EMULATOR_HOST ? {} : {
+      credential: serviceAccount ? (0, import_app.cert)(JSON.parse(serviceAccount)) : (0, import_app.applicationDefault)()
+    }
+  });
+}
+var adminAuth = () => (0, import_auth.getAuth)(adminApp());
+var firestore = () => (0, import_firestore.getFirestore)(adminApp());
+
 // server/firebaseRoutes.ts
 var firebaseRoutes = (0, import_express.Router)();
 var now = () => (/* @__PURE__ */ new Date()).toISOString();
@@ -139,6 +161,13 @@ async function owned(req, collection, id) {
   if ((collection === "djs" ? data.id : data.djId) !== user.uid) throw new HttpError(403, "You cannot modify this record.");
   return { ref, data, user };
 }
+var PaystackError = class extends HttpError {
+  constructor(message, definitive, providerStatus) {
+    super(502, message);
+    this.definitive = definitive;
+    this.providerStatus = providerStatus;
+  }
+};
 async function paystack(path2, body) {
   if (!process.env.PAYSTACK_SECRET_KEY) throw new HttpError(503, "Payments are not configured.");
   const response = await fetch(`https://api.paystack.co${path2}`, {
@@ -148,7 +177,11 @@ async function paystack(path2, body) {
     signal: AbortSignal.timeout(2e4)
   });
   const result = await response.json();
-  if (!response.ok || !result.status) throw new HttpError(502, result.message || "Paystack request failed.");
+  if (!response.ok || !result.status) throw new PaystackError(
+    result.message || "Paystack request failed.",
+    response.status >= 400 && response.status < 500 && ![408, 409, 429].includes(response.status) && !/reference|duplicate|already/i.test(result.message || ""),
+    response.status
+  );
   return result.data;
 }
 function initialEvent(dj, id) {
@@ -216,6 +249,17 @@ firebaseRoutes.post("/auth/profile", route(async (req, res) => {
 firebaseRoutes.put("/djs/:id", route(async (req, res) => {
   const { ref, user } = await owned(req, "djs", String(req.params.id));
   const patch = profilePatch(req.body);
+  if (["bankCode", "accountNumber", "bankName"].some((key) => patch[key] !== void 0)) {
+    if (patch.accountNumber || patch.bankCode || patch.bankName) {
+      if (!/^\d{10}$/.test(patch.accountNumber || "") || !/^\d{3,10}$/.test(patch.bankCode || "")) throw new HttpError(400, "Select a bank and enter a 10-digit account number.");
+      const banks = await paystack("/bank?country=nigeria");
+      const bank = banks.find((b) => b.code === patch.bankCode);
+      if (!bank) throw new HttpError(400, "Select a supported bank.");
+      const account = await paystack(`/bank/resolve?account_number=${patch.accountNumber}&bank_code=${patch.bankCode}`);
+      patch.bankName = bank.name;
+      patch.accountName = account.account_name;
+    } else patch.accountName = "";
+  }
   const db = firestore();
   const dj = await db.runTransaction(async (tx) => {
     const old = (await tx.get(ref)).data();
@@ -304,7 +348,10 @@ firebaseRoutes.post("/requests", route(async (req, res) => {
 firebaseRoutes.get("/requests/track/:token", route(async (req, res) => {
   const docs = await firestore().collection("song_requests").where("trackingToken", "==", documentId(req.params.token)).limit(1).get();
   if (docs.empty) throw new HttpError(404, "Request not found.");
-  res.json({ success: true, request: docs.docs[0].data() });
+  const request = docs.docs[0].data();
+  const queue = await firestore().collection("song_requests").where("eventId", "==", request.eventId).get();
+  const rank = activeQueue(queue.docs.map((d) => d.data())).findIndex((r) => r.id === request.id) + 1;
+  res.json({ success: true, request: { ...request, queueRank: rank || null } });
 }));
 firebaseRoutes.patch("/requests/:id/status", route(async (req, res) => {
   const { ref, user } = await owned(req, "song_requests", String(req.params.id));
@@ -317,7 +364,8 @@ firebaseRoutes.patch("/requests/:id/status", route(async (req, res) => {
     const event = (await tx.get(eventRef)).data();
     const previousRef = event?.playingRequestId && event.playingRequestId !== ref.id ? db.collection("song_requests").doc(event.playingRequestId) : null;
     const previous = previousRef ? (await tx.get(previousRef)).data() : null;
-    const patch = { status, updatedAt: now() };
+    const rejectionReason = status === "rejected" ? text(req.body.reason || "", "rejection reason", 500, false) : "";
+    const patch = { status, rejectionReason, updatedAt: now() };
     if (status === "playing") {
       patch.playingStartedAt = now();
       if (previous?.status === "playing" && previousRef) {
@@ -332,7 +380,7 @@ firebaseRoutes.patch("/requests/:id/status", route(async (req, res) => {
     }
     tx.update(ref, patch);
     const history = db.collection("queue_history").doc();
-    tx.create(history, { id: history.id, requestId: ref.id, djId: user.uid, song: request.song, artist: request.artist, action: status, performer: user.uid, oldStatus: request.status, newStatus: status, createdAt: now() });
+    tx.create(history, { id: history.id, requestId: ref.id, djId: user.uid, song: request.song, artist: request.artist, action: status, note: rejectionReason, performer: user.uid, oldStatus: request.status, newStatus: status, createdAt: now() });
   });
   res.json({ success: true });
 }));
@@ -380,9 +428,10 @@ async function settlePayment(verified, requestedId, db = firestore()) {
     const request = (await tx.get(requestRef)).data();
     const djRef = db.collection("djs").doc(payment.djId);
     const dj = (await tx.get(djRef)).data();
+    const event = request?.eventId ? (await tx.get(db.collection("events").doc(request.eventId))).data() : void 0;
     if (!request || !dj || request.djId !== payment.djId) throw new HttpError(400, "Checkout owner mismatch.");
     tx.update(ref, { status: "success", paidAt: now() });
-    tx.update(requestRef, { tipAmount: import_firestore2.FieldValue.increment(payment.amount), priority: true, updatedAt: now() });
+    tx.update(requestRef, { tipAmount: import_firestore2.FieldValue.increment(payment.amount), priority: request.priority === true || event?.autoPriority === true, updatedAt: now() });
     tx.update(djRef, { availableBalance: import_firestore2.FieldValue.increment(payment.amount), totalTipsEarned: import_firestore2.FieldValue.increment(payment.amount) });
     const notification = db.collection("notifications").doc(`payment-${ref.id}`);
     tx.set(notification, { id: notification.id, djId: payment.djId, type: "tip_confirmed", title: "Tip confirmed", message: `\u20A6${payment.amount} received for ${request.song}`, song: request.song, artist: request.artist, tipAmount: payment.amount, timestamp: now(), read: false });
@@ -411,6 +460,36 @@ async function settleTransfer(reference, status, db = firestore()) {
     else tx.update(djRef, { ...cleared, availableBalance: import_firestore2.FieldValue.increment(payout.amount), ...payout.status === "success" ? { totalWithdrawn: import_firestore2.FieldValue.increment(-payout.amount) } : {} });
   });
 }
+async function recordTransfer(reference, transfer, db = firestore()) {
+  const ref = db.collection("payouts").doc(documentId(reference));
+  const payout = (await ref.get()).data();
+  if (!payout || transfer.reference !== reference || transfer.currency !== "NGN" || transfer.amount !== Math.round(payout.netAmount * 100)) throw new HttpError(502, "Transfer details do not match this payout.");
+  await ref.update({ providerStatus: transfer.status, ...transfer.transfer_code ? { paystackTransferCode: transfer.transfer_code } : {}, lastCheckedAt: now() });
+  await settleTransfer(reference, transfer.status, db);
+}
+async function reconcilePayout(reference, db = firestore()) {
+  const transfer = await paystack(`/transfer/verify/${encodeURIComponent(documentId(reference))}`);
+  await recordTransfer(reference, transfer, db);
+}
+firebaseRoutes.post("/payout/:reference/retry", route(async (req, res) => {
+  const { ref, data } = await owned(req, "payouts", String(req.params.reference));
+  if (data.status !== "processing") return res.json({ success: true, payout: data });
+  try {
+    await reconcilePayout(ref.id);
+  } catch (error) {
+    if (!(error instanceof PaystackError) || error.providerStatus !== 404) throw error;
+    if (Date.now() - Date.parse(data.createdAt) < 12e4) throw new HttpError(409, "Allow two minutes for the original transfer to reach the provider, then check again.");
+    if (!data.paystackRecipientCode) throw new HttpError(409, "Contact payout support to reconcile this transfer before retrying.");
+    const transfer = await paystack("/transfer", { source: "balance", amount: Math.round(data.netAmount * 100), recipient: data.paystackRecipientCode, reference: ref.id, currency: "NGN", reason: "VybeCheck DJ withdrawal" });
+    await recordTransfer(ref.id, transfer);
+  }
+  res.json({ success: true, payout: (await ref.get()).data() });
+}));
+firebaseRoutes.post("/payout/:reference/reconcile", route(async (req, res) => {
+  const { ref, data } = await owned(req, "payouts", String(req.params.reference));
+  if (data.status === "processing" || data.status === "pending") await reconcilePayout(ref.id);
+  res.json({ success: true, payout: (await ref.get()).data() });
+}));
 firebaseRoutes.post("/payments/webhook", route(async (req, res) => {
   const secret = process.env.PAYSTACK_SECRET_KEY;
   const signature = req.headers["x-paystack-signature"];
@@ -456,7 +535,7 @@ firebaseRoutes.post("/payout/withdraw", route(async (req, res) => {
     }
     const dj = (await tx.get(djRef)).data();
     const amount = amountKobo / 100;
-    if (!dj || dj.availableBalance < amount) throw new HttpError(400, "Insufficient wallet balance.");
+    if (!dj || !Number.isFinite(dj.availableBalance) || dj.availableBalance < amount) throw new HttpError(400, "Insufficient wallet balance.");
     if (dj.pendingPayoutReference) throw new HttpError(409, "Your previous payout is awaiting confirmation. Check your payout history before withdrawing again.");
     const payout2 = { id: reference, reference, djId: user.uid, amount, fee: 25, netAmount: amount - 25, currency: "NGN", bankCode, bankName, accountNumber, accountName: "", status: "processing", createdAt: now() };
     tx.create(ref, payout2);
@@ -471,14 +550,13 @@ firebaseRoutes.post("/payout/withdraw", route(async (req, res) => {
       await ref.update({ accountName: account.account_name, paystackRecipientCode: recipient.recipient_code });
       transferAttempted = true;
       const transfer = await paystack("/transfer", { source: "balance", amount: amountKobo - 2500, recipient: recipient.recipient_code, reference, reason: "VybeCheck DJ withdrawal" });
-      await ref.update({ paystackTransferCode: transfer.transfer_code });
-      await settleTransfer(reference, transfer.status);
+      await recordTransfer(reference, transfer, db);
     } catch (error) {
-      if (!transferAttempted) await settleTransfer(reference, "failed");
+      if (!transferAttempted || error instanceof PaystackError && error.definitive) await settleTransfer(reference, "failed");
       else await ref.update({ failureReason: "Transfer awaiting provider confirmation. Do not retry with a new reference." });
-      if (!transferAttempted) throw error;
     }
   }
+  if (result.existing && result.payout.status === "processing") await reconcilePayout(reference, db);
   const payout = (await ref.get()).data();
   const wallet = (await djRef.get()).data();
   res.json({ success: true, payout, wallet: { availableBalance: wallet?.availableBalance, totalWithdrawn: wallet?.totalWithdrawn } });
@@ -570,7 +648,7 @@ app.get("/api/music/search", async (req, res) => {
     return res.status(500).json({ error: "Failed to search music catalog", details: error.message });
   }
 });
-app.get("/api/music/trending", async (req, res) => {
+app.get("/api/music/suggestions", async (req, res) => {
   try {
     const defaultQueries = ["Burna Boy", "Tyla Amapiano", "Asake", "Shallipopi", "Davido", "Tyler ICU"];
     const randomTerm = defaultQueries[Math.floor(Math.random() * defaultQueries.length)];
@@ -588,11 +666,11 @@ app.get("/api/music/trending", async (req, res) => {
         previewUrl: item.previewUrl,
         releaseYear: item.releaseDate ? new Date(item.releaseDate).getFullYear() : void 0
       }));
-      return res.json({ trending: tracks });
+      return res.json({ suggestions: tracks });
     }
-    return res.json({ trending: [] });
+    return res.json({ suggestions: [] });
   } catch (err) {
-    return res.json({ trending: [] });
+    return res.json({ suggestions: [] });
   }
 });
 app.post("/api/music/identify", async (req, res) => {
@@ -608,15 +686,14 @@ app.post("/api/music/identify", async (req, res) => {
       console.error("CRITICAL ERROR: ACRCloud keys missing in .env");
       return res.status(500).json({ error: "Audio recognition engine offline. Check server environment variables." });
     }
-    const cleanBase64 = audioData.replace(/^data:audio\/\w+;base64,/, "");
-    const audioBuffer = Buffer.from(cleanBase64, "base64");
+    const { buffer: audioBuffer, mimeType, filename } = decodeAudioDataUrl(audioData);
     const timestamp = Math.floor(Date.now() / 1e3).toString();
     const signatureVersion = "1";
     const dataType = "audio";
     const stringToSign = ["POST", "/v1/identify", accessKey, dataType, signatureVersion, timestamp].join("\n");
     const signature = import_node_crypto2.default.createHmac("sha1", accessSecret).update(Buffer.from(stringToSign, "utf-8")).digest("base64");
     const formData = new FormData();
-    formData.append("sample", new Blob([audioBuffer]), "sample.webm");
+    formData.append("sample", new Blob([audioBuffer], { type: mimeType }), filename);
     formData.append("sample_bytes", audioBuffer.length.toString());
     formData.append("access_key", accessKey);
     formData.append("data_type", dataType);
@@ -672,7 +749,7 @@ app.post("/api/music/identify", async (req, res) => {
     });
   } catch (error) {
     console.error("ACRCloud error:", error.message);
-    return res.status(500).json({ success: false, error: "Internal server error processing audio." });
+    return res.status(error instanceof HttpError ? error.status : 500).json({ success: false, error: error instanceof HttpError ? error.message : "Internal server error processing audio." });
   }
 });
 app.get("/api/health", (_req, res) => res.json({ status: "ok", database: "Cloud Firestore" }));
