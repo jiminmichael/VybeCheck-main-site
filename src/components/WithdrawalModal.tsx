@@ -1,3 +1,4 @@
+import { Dialog } from './ui/Dialog';
 import React, { useState, useEffect } from 'react';
 import { 
   X, 
@@ -148,7 +149,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
+    <Dialog label="Withdraw DJ earnings" onClose={handleClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
       <div className="bg-[#0E0E12] border border-[rgba(255,255,255,0.12)] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl relative">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-[rgba(255,255,255,0.08)] bg-gradient-to-r from-[rgba(198,161,91,0.12)] via-transparent to-[rgba(91,63,209,0.12)]">
@@ -165,7 +166,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               </p>
             </div>
           </div>
-          <button
+          <button aria-label="Close dialog"
             onClick={handleClose}
             className="w-8 h-8 rounded-lg bg-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.1)] text-[#8F8C88] hover:text-[#F5F2ED] flex items-center justify-center transition-colors"
           >
@@ -211,7 +212,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               </div>
             </div>
 
-            <button
+            <button aria-label="Close dialog"
               onClick={handleClose}
               className="w-full py-3 rounded-xl bg-[#C6A15B] hover:bg-[#D4B36E] text-[#070708] font-bold text-xs uppercase tracking-wider transition-all"
             >
@@ -241,7 +242,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
             </div>
 
             {error && (
-              <div className="p-3 bg-[#8B3A3A]/20 border border-[#8B3A3A]/40 rounded-xl text-xs text-[#F5F2ED] flex items-center gap-2">
+              <div id="withdrawal-error" role="alert" className="p-3 bg-[#8B3A3A]/20 border border-[#8B3A3A]/40 rounded-xl text-xs text-[#F5F2ED] flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-[#8B3A3A] flex-shrink-0" />
                 <span>{error}</span>
               </div>
@@ -249,14 +250,14 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
             {/* Amount Field */}
             <div>
-              <label className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-1.5 font-medium">
+              <label htmlFor="withdrawalmodal-withdrawal-amount" className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-1.5 font-medium">
                 Withdrawal Amount (₦)
               </label>
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-[#E6D3A3]">
                   ₦
                 </span>
-                <input
+                <input id="withdrawalmodal-withdrawal-amount" aria-describedby={[error && "withdrawal-error", resolveError && "bank-resolution-error"].filter(Boolean).join(" ") || undefined}
                   type="number"
                   min="1000"
                   max={availableBalance}
@@ -293,10 +294,10 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
             {/* Bank Selection */}
             <div className="space-y-3">
               <div>
-                <label className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-1.5 font-medium">
+                <label htmlFor="withdrawalmodal-destination-bank" className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-1.5 font-medium">
                   Destination Bank
                 </label>
-                <select
+                <select id="withdrawalmodal-destination-bank" aria-describedby={[error && "withdrawal-error", resolveError && "bank-resolution-error"].filter(Boolean).join(" ") || undefined}
                   value={selectedBankCode}
                   onChange={(e) => setSelectedBankCode(e.target.value)}
                   className="w-full bg-[#0E0E12] border border-[rgba(255,255,255,0.1)] focus:border-[#C6A15B] rounded-xl py-2.5 px-3 text-xs text-[#F5F2ED] outline-none"
@@ -311,10 +312,10 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-1.5 font-medium">
+                  <label htmlFor="withdrawalmodal-10-digit-nuban-number" className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-1.5 font-medium">
                     10-Digit NUBAN Number
                   </label>
-                  <input
+                  <input id="withdrawalmodal-10-digit-nuban-number" aria-describedby={[error && "withdrawal-error", resolveError && "bank-resolution-error"].filter(Boolean).join(" ") || undefined}
                     type="text"
                     maxLength={10}
                     value={accountNumber}
@@ -326,12 +327,12 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-1.5 font-medium flex items-center justify-between">
+                  <label htmlFor="withdrawalmodal-account-name" className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-1.5 font-medium flex items-center justify-between">
                     <span>Account Name</span>
                     {isResolvingAccount && <Loader2 className="w-3 h-3 text-[#C6A15B] animate-spin" />}
                     {accountResolved && <Check className="w-3 h-3 text-[#2E8B7A]" />}
                   </label>
-                  <input
+                  <input id="withdrawalmodal-account-name" aria-describedby={[error && "withdrawal-error", resolveError && "bank-resolution-error"].filter(Boolean).join(" ") || undefined}
                     type="text"
                     value={accountName}
                     onChange={(e) => setAccountName(e.target.value)}
@@ -345,7 +346,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
               </div>
 
               {resolveError && (
-                <p className="text-[11px] text-[#C6A15B] flex items-center gap-1">
+                <p id="bank-resolution-error" role="alert" className="text-[11px] text-[#C6A15B] flex items-center gap-1">
                   <AlertCircle className="w-3 h-3" />
                   <span>{resolveError}</span>
                 </p>
@@ -387,6 +388,6 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
           </form>
         )}
       </div>
-    </div>
+    </Dialog>
   );
 };

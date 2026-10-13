@@ -1,3 +1,5 @@
+import { nextSuggestionIndex } from '../services/suggestionNavigation';
+import { TrackingActions } from './ui/TrackingActions';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Check, 
@@ -52,10 +54,9 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
   // Form State
   const [song, setSong] = useState('');
   const [artist, setArtist] = useState('');
-  const [genre, setGenre] = useState<Genre>('AFROBEATS');
+  const [genre, setGenre] = useState<Genre>('Afrobeats');
   const [requesterName, setRequesterName] = useState('');
   const [dedication, setDedication] = useState('');
-  const [genreDropdownOpen, setGenreDropdownOpen] = useState(false);
   const [honeypot, setHoneypot] = useState('');
 
   // Selected Track Metadata from Real Catalog or Audio AI
@@ -67,6 +68,12 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
   const [suggestions, setSuggestions] = useState<RealTrackSuggestion[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [activeSuggestion, setActiveSuggestion] = useState(-1);
+  const [searchError, setSearchError] = useState('');
+  const [hasSearched, setHasSearched] = useState(false);
+  const [songError, setSongError] = useState(false);
+  const searchVersion = useRef(0);
+  const songInputRef = useRef<HTMLInputElement>(null);
 
   // Audio Preview state
   const [activePreviewId, setActivePreviewId] = useState<string | null>(null);
@@ -86,7 +93,6 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
 
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
-  const genreContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Subscribe to store events
   useEffect(() => {
@@ -106,9 +112,6 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowSuggestions(false);
       }
-      if (genreContainerRef.current && !genreContainerRef.current.contains(e.target as Node)) {
-        setGenreDropdownOpen(false);
-      }
     };
     document.addEventListener('mousedown', handleClickOutside);
 
@@ -120,43 +123,68 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
   }, []);
 
   // Real-time search suggestions when song or artist changes
+  const cancelSearch = () => {
+    searchVersion.current++;
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    setIsLoadingSuggestions(false);
+    setActiveSuggestion(-1);
+  };
+  useEffect(() => () => {
+    searchVersion.current++;
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+  }, []);
+
   const handleSongInputChange = (value: string) => {
+    cancelSearch();
+    const version = searchVersion.current;
     setSong(value);
+    if (songError && value.trim()) { setSongError(false); setErrorMessage(null); }
     setSelectedTrackMeta(null);
     setIsAudioIdentified(false);
-
-    if (searchDebounceRef.current) {
-      clearTimeout(searchDebounceRef.current);
-    }
-
-    if (value.trim().length >= 2) {
-      setIsLoadingSuggestions(true);
-      setShowSuggestions(true);
-      searchDebounceRef.current = setTimeout(async () => {
+    setSuggestions([]);
+    setSearchError('');
+    setHasSearched(false);
+    if (value.trim().length < 2) { setShowSuggestions(false); return; }
+    setShowSuggestions(true);
+    setIsLoadingSuggestions(true);
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
         const results = await musicService.searchTracks(value.trim(), 6);
-        setSuggestions(results);
-        setIsLoadingSuggestions(false);
-      }, 200);
-    } else {
-      setSuggestions([]);
-      setIsLoadingSuggestions(false);
-      setShowSuggestions(false);
+        if (version === searchVersion.current) { setSuggestions(results); setHasSearched(true); }
+      } catch {
+        if (version === searchVersion.current) setSearchError('Search is unavailable. Enter the song title and artist manually.');
+      } finally {
+        if (version === searchVersion.current) setIsLoadingSuggestions(false);
+      }
+    }, 200);
+  };
+  const handleSongKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') { event.preventDefault(); setShowSuggestions(false); setActiveSuggestion(-1); return; }
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && suggestions.length) {
+      event.preventDefault(); setShowSuggestions(true);
+      const index = nextSuggestionIndex(event.key, activeSuggestion, suggestions.length);
+      setActiveSuggestion(index);
+      document.getElementById(`song-option-${index}`)?.scrollIntoView({ block: 'nearest' });
+    } else if (event.key === 'Enter' && showSuggestions && activeSuggestion >= 0) {
+      event.preventDefault(); handleSelectSuggestion(suggestions[activeSuggestion]);
     }
   };
 
   const handleSelectSuggestion = (track: RealTrackSuggestion) => {
+    cancelSearch(); setSongError(false); setErrorMessage(null); setSearchError('');
     setSong(track.song);
     setArtist(track.artist);
-    setGenre((track.genre?.toUpperCase() as Genre) || 'AFROBEATS');
+    setGenre(track.genre || 'Other');
     setSelectedTrackMeta(track);
     setShowSuggestions(false);
     setSuggestions([]);
   };
 
   const handleApplyAudioRecognition = (result: AudioRecognitionResult) => {
+    cancelSearch(); setSongError(false); setErrorMessage(null); setSearchError(''); setShowSuggestions(false); setSuggestions([]);
     setSong(result.song);
     setArtist(result.artist);
-    setGenre((result.genre?.toUpperCase() as Genre) || 'AFROBEATS');
+    setGenre(result.genre || 'Other');
     setIsAudioIdentified(!result.isExample);
     setAudioConfidence(result.isExample ? undefined : result.confidence);
     setSelectedTrackMeta({
@@ -178,6 +206,7 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
     setErrorMessage(null);
 
     if (!song.trim()) {
+      setSongError(true); songInputRef.current?.focus();
       setErrorMessage('Please enter a song title or search an artist.');
       return;
     }
@@ -230,9 +259,10 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
   };
 
   const handleReset = () => {
+    cancelSearch(); setSongError(false); setSuggestions([]); setSearchError(''); setHasSearched(false); setShowSuggestions(false);
     setSong('');
     setArtist('');
-    setGenre('AFROBEATS');
+    setGenre('Afrobeats');
     setRequesterName('');
     setDedication('');
     setSelectedTrackMeta(null);
@@ -268,9 +298,9 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
 
       {/* REQUEST FORM / SUCCESS STATE */}
       {!submittedRequest ? (
-        <div className="bg-[rgba(255,255,255,0.06)] backdrop-blur-2xl border border-[rgba(255,255,255,0.08)] rounded-2xl p-6 sm:p-8 relative">
+        <form onSubmit={handleSubmit} className="bg-[rgba(255,255,255,0.06)] backdrop-blur-2xl border border-[rgba(255,255,255,0.08)] rounded-2xl p-6 sm:p-8 relative">
           {errorMessage && (
-            <div className="mb-6 p-3 rounded-lg bg-[rgba(139,58,58,0.2)] border border-[#8B3A3A] text-xs text-[#F5F2ED]">
+            <div id="request-error" role="alert" className="mb-6 p-3 rounded-lg bg-[rgba(139,58,58,0.2)] border border-[#8B3A3A] text-xs text-[#F5F2ED]">
               {errorMessage}
             </div>
           )}
@@ -287,7 +317,7 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
                       className="w-full h-full object-cover"
                     />
                     {selectedTrackMeta.previewUrl && (
-                      <button
+                      <button aria-label={`${activePreviewId === selectedTrackMeta.id ? "Pause" : "Play"} preview of ${selectedTrackMeta.song}`}
                         type="button"
                         onClick={() => musicService.playPreview(selectedTrackMeta.previewUrl!, selectedTrackMeta.id)}
                         className="absolute inset-0 bg-black/40 flex items-center justify-center text-white"
@@ -311,7 +341,7 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
                 </div>
               </div>
 
-              <button
+              <button aria-label="Clear selected song"
                 type="button"
                 onClick={() => setSelectedTrackMeta(null)}
                 className="p-1 text-[#8F8C88] hover:text-[#F5F2ED]"
@@ -324,12 +354,12 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
           {/* Form Group 1: Song Search */}
           <div className="mb-7" ref={dropdownRef}>
             <div className="flex items-center justify-between mb-3">
-              <label className="text-[11px] uppercase tracking-[0.25em] text-[#8F8C88] font-medium">
+              <label htmlFor="request-song" className="text-[11px] uppercase tracking-[0.25em] text-[#8F8C88] font-medium">
                 WHAT DO YOU WANT TO HEAR?
               </label>
 
               {/* Inline Shazam Button */}
-              <button
+              <button aria-label="Audio Identify: recognize a song using microphone or upload"
                 type="button"
                 onClick={() => setIsAudioModalOpen(true)}
                 className="text-[10px] uppercase tracking-wider text-[#4D7CFE] hover:text-white flex items-center gap-1 transition-colors"
@@ -342,6 +372,12 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
 
             <div className="relative">
               <input
+                id="request-song" ref={songInputRef} role="combobox" aria-autocomplete="list"
+                aria-expanded={showSuggestions && suggestions.length > 0}
+                aria-controls={showSuggestions && suggestions.length > 0 ? 'song-suggestions' : undefined}
+                aria-activedescendant={showSuggestions && activeSuggestion >= 0 ? `song-option-${activeSuggestion}` : undefined}
+                aria-invalid={songError} aria-describedby={`song-help song-search-status${songError ? ' request-error' : ''}`}
+                onKeyDown={handleSongKeyDown}
                 type="text"
                 className="form-input pr-8"
                 placeholder="Search song or artist"
@@ -363,10 +399,12 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
 
             {/* Suggestions Dropdown */}
             {showSuggestions && suggestions.length > 0 && (
-              <div className="absolute left-4 right-4 mt-2 z-30 bg-[#0E0E12]/95 backdrop-blur-2xl border border-[rgba(255,255,255,0.14)] rounded-xl shadow-2xl overflow-hidden max-h-60 overflow-y-auto divide-y divide-[rgba(255,255,255,0.06)]">
-                {suggestions.map((item) => (
+              <div id="song-suggestions" role="listbox" aria-label="Song suggestions" className="absolute left-4 right-4 mt-2 z-30 bg-[#0E0E12]/95 backdrop-blur-2xl border border-[rgba(255,255,255,0.14)] rounded-xl shadow-2xl overflow-hidden max-h-60 overflow-y-auto divide-y divide-[rgba(255,255,255,0.06)]">
+                {suggestions.map((item, index) => (
                   <div
-                    key={item.id}
+                    key={item.id} id={`song-option-${index}`} role="option" aria-selected={activeSuggestion === index}
+                    onMouseDown={e => e.preventDefault()}
+                    style={activeSuggestion === index ? { background: 'rgba(77,124,254,0.2)' } : undefined}
                     className="p-3 hover:bg-[rgba(255,255,255,0.06)] transition-colors flex items-center justify-between gap-3 cursor-pointer"
                     onClick={() => handleSelectSuggestion(item)}
                   >
@@ -396,17 +434,20 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
               </div>
             )}
 
-            <div className="mt-2 text-xs text-[#8F8C88]">
-              Be specific. The DJ is listening.
+            <p id="song-search-status" role="status" className="mt-2 text-xs text-[#8F8C88]">
+              {isLoadingSuggestions ? 'Searching songs…' : searchError || (hasSearched && !suggestions.length ? 'No songs found. Enter the song title and artist manually.' : hasSearched ? `${suggestions.length} suggestions available. Use Up and Down arrows, then Enter to select.` : '')}
+            </p>
+            <div id="song-help" className="mt-2 text-xs text-[#8F8C88]">
+              Search or enter a song title manually. Add the artist below.
             </div>
           </div>
 
           {/* Form Group 2: Artist (if custom entered) */}
           <div className="mb-7">
-            <label className="text-[11px] uppercase tracking-[0.25em] text-[#8F8C88] font-medium block mb-3">
+            <label htmlFor="publicrequestportal-artist-name" className="text-[11px] uppercase tracking-[0.25em] text-[#8F8C88] font-medium block mb-3">
               ARTIST NAME
             </label>
-            <input
+            <input id="publicrequestportal-artist-name"
               type="text"
               className="form-input"
               placeholder="e.g. Burna Boy, Asake, Tyla"
@@ -415,54 +456,20 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
             />
           </div>
 
-          {/* Form Group 3: Custom Genre Dropdown */}
-          <div className="mb-8" ref={genreContainerRef}>
-            <label className="text-[11px] uppercase tracking-[0.25em] text-[#8F8C88] font-medium block mb-3">
-              SELECT THE VYBE
-            </label>
-
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setGenreDropdownOpen(!genreDropdownOpen)}
-                className="w-full flex justify-between items-center py-3 border-b border-[rgba(255,255,255,0.14)] text-base text-[#F5F2ED] transition-colors"
-              >
-                <span>{genre || 'Choose a genre'}</span>
-                <ChevronDown className={`w-4 h-4 text-[#8F8C88] transition-transform duration-300 ${genreDropdownOpen ? 'rotate-180 text-[#F5F2ED]' : ''}`} />
-              </button>
-
-              {/* Dropdown Menu */}
-              {genreDropdownOpen && (
-                <div className="absolute top-[calc(100%+12px)] -left-4 -right-4 bg-[#0E0E12]/95 backdrop-blur-2xl border border-[rgba(255,255,255,0.14)] rounded-xl p-3 grid grid-cols-2 gap-1.5 z-20 max-h-64 overflow-y-auto shadow-2xl">
-                  {GENRES.map((g) => (
-                    <button
-                      type="button"
-                      key={g}
-                      onClick={() => {
-                        setGenre(g);
-                        setGenreDropdownOpen(false);
-                      }}
-                      className={`p-2.5 text-[13px] font-medium text-center rounded-lg transition-colors ${
-                        genre === g
-                          ? 'bg-[rgba(91,63,209,0.2)] text-[#F5F2ED] border border-[#5B3FD1]'
-                          : 'text-[#8F8C88] hover:bg-[rgba(255,255,255,0.06)] hover:text-[#F5F2ED]'
-                      }`}
-                    >
-                      {g}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+          <div className="mb-8">
+            <label htmlFor="request-genre" className="text-[11px] uppercase tracking-[0.25em] text-[#8F8C88] font-medium block mb-3">SELECT THE VYBE</label>
+            <select id="request-genre" value={genre} onChange={e => setGenre(e.target.value as Genre)} className="form-input w-full bg-[#0E0E12]">
+              {GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+            </select>
           </div>
 
           {/* Guest Name & Dedication */}
           <div className="grid grid-cols-2 gap-4 mb-8 pt-2 border-t border-[rgba(255,255,255,0.06)]">
             <div>
-              <label className="text-[10px] uppercase tracking-wider text-[#8F8C88] block mb-1">
+              <label htmlFor="publicrequestportal-your-name-table" className="text-[10px] uppercase tracking-wider text-[#8F8C88] block mb-1">
                 Your Name / Table
               </label>
-              <input
+              <input id="publicrequestportal-your-name-table"
                 type="text"
                 className="w-full bg-transparent border-b border-[rgba(255,255,255,0.14)] py-1.5 text-xs text-[#F5F2ED] focus:border-[#4D7CFE]"
                 placeholder="e.g. Ade (Table 4)"
@@ -471,10 +478,10 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
               />
             </div>
             <div>
-              <label className="text-[10px] uppercase tracking-wider text-[#8F8C88] block mb-1">
+              <label htmlFor="publicrequestportal-dedication" className="text-[10px] uppercase tracking-wider text-[#8F8C88] block mb-1">
                 Dedication
               </label>
-              <input
+              <input id="publicrequestportal-dedication"
                 type="text"
                 className="w-full bg-transparent border-b border-[rgba(255,255,255,0.14)] py-1.5 text-xs text-[#F5F2ED] focus:border-[#4D7CFE]"
                 placeholder="Birthday shoutout"
@@ -486,14 +493,13 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
 
           {/* Submit Button */}
           <button
-            type="button"
-            onClick={() => handleSubmit()}
+            type="submit"
             disabled={isSubmitting || !currentEvent?.requestsEnabled}
             className="btn btn-primary btn-full"
           >
             {isSubmitting ? 'Sending Request...' : 'Send Request'}
           </button>
-        </div>
+        </form>
       ) : (
         /* SUCCESS STATE */
         <div className="bg-[rgba(255,255,255,0.06)] backdrop-blur-2xl border border-[rgba(255,255,255,0.08)] rounded-2xl p-6 sm:p-8 text-center">
@@ -521,6 +527,8 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
             </span>
           </div>
 
+          <TrackingActions token={submittedRequest.trackingToken} />
+
           <button
             type="button"
             onClick={() => onTrackRequest(submittedRequest.trackingToken)}
@@ -538,7 +546,7 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
             {!currentEvent?.tipsEnabled ? 'Tips are paused' : currentEvent.autoPriority ? 'Make it a Priority' : 'Tip the DJ'}
           </button>
 
-          {errorMessage && <p role="alert" className="text-sm text-rose-300">{errorMessage}</p>}
+          {errorMessage && <p id="tip-error" role="alert" className="text-sm text-rose-300">{errorMessage}</p>}
           {/* PRIORITY & TIP SECTION */}
           {priorityOpen && currentEvent?.tipsEnabled && (
             <div className="mt-8 pt-8 border-t border-[rgba(255,255,255,0.08)] text-left">
@@ -557,11 +565,11 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
                 {TIP_TIERS.map((tier) => {
                   const isSelected = selectedTip === tier.amount && !customTip;
                   return (
-                    <div
+                    <button type="button" aria-pressed={isSelected}
                       key={tier.amount}
                       onClick={() => {
                         setSelectedTip(tier.amount);
-                        setCustomTip('');
+                        setCustomTip(''); setErrorMessage(null);
                       }}
                       className={`p-4 rounded-xl text-center cursor-pointer transition-all border ${
                         isSelected
@@ -577,29 +585,29 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
                       <div className={`text-[9px] uppercase tracking-[0.2em] mt-1 ${tier.signature ? 'text-[#C6A15B]' : 'text-[#8F8C88]'}`}>
                         {tier.type}
                       </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
 
               {/* Custom Tip Input */}
-              <label className="text-[11px] uppercase tracking-[0.25em] text-[#8F8C88] block mt-5 mb-2">
+              <label htmlFor="publicrequestportal-set-your-own-vybe" className="text-[11px] uppercase tracking-[0.25em] text-[#8F8C88] block mt-5 mb-2">
                 SET YOUR OWN VYBE
               </label>
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8F8C88] font-medium">
                   ₦
                 </span>
-                <input
+                <input id="publicrequestportal-set-your-own-vybe" aria-describedby={`tip-help${errorMessage ? " tip-error" : ""}`}
                   type="number"
                   placeholder="Enter amount"
                   className="w-full bg-[rgba(255,255,255,0.06)] border border-[rgba(255,255,255,0.08)] rounded-xl py-3 pl-8 pr-4 text-center text-sm text-[#F5F2ED] focus:border-[#C6A15B] outline-none"
                   value={customTip}
-                  onChange={(e) => setCustomTip(e.target.value)}
+                  onChange={(e) => { setCustomTip(e.target.value); setErrorMessage(null); }}
                 />
               </div>
 
-              <div className="mt-3 text-center text-xs text-[#8F8C88]">
+              <div id="tip-help" className="mt-3 text-center text-xs text-[#8F8C88]">
                 Allowed tips: ₦{currentEvent?.minTip.toLocaleString()}–₦{currentEvent?.maxTip.toLocaleString()}
               </div>
 

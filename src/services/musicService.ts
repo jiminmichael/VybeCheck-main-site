@@ -70,7 +70,7 @@ class MusicService {
       console.error('All music search strategies failed:', fallbackErr);
     }
 
-    return [];
+    throw new Error('Song search is unavailable. Enter the song title and artist manually.');
   }
 
   /**

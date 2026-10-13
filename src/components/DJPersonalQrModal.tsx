@@ -1,3 +1,4 @@
+import { Dialog } from './ui/Dialog';
 import { store } from '../services/store';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -77,20 +78,14 @@ export const DJPersonalQrModal: React.FC<DJPersonalQrModalProps> = ({ dj, onClos
     a.click();
   };
 
-  useEffect(() => {
-    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') { if (fullProjectorMode) setFullProjectorMode(false); else onClose(); } };
-    window.addEventListener('keydown', close);
-    return () => window.removeEventListener('keydown', close);
-  }, [fullProjectorMode, onClose]);
 
   const handlePrintFlyer = () => {
     window.print();
   };
 
   // Fullscreen club projector mode
-  if (fullProjectorMode) {
-    return (
-      <div className="fixed inset-0 z-50 bg-[#05020c] flex flex-col items-center justify-center p-6 text-center select-none">
+  const projector = fullProjectorMode ? (
+      <Dialog label="DJ QR projector" onClose={() => setFullProjectorMode(false)} className="fixed inset-0 z-50 bg-[#05020c] flex flex-col items-center justify-center p-6 text-center select-none">
         <button
           onClick={() => setFullProjectorMode(false)}
           className="absolute top-6 right-6 px-4 py-2 rounded-xl bg-purple-950/80 hover:bg-purple-900 text-slate-300 hover:text-white border border-purple-800 text-xs font-bold transition-all"
@@ -129,14 +124,13 @@ export const DJPersonalQrModal: React.FC<DJPersonalQrModalProps> = ({ dj, onClos
             </p>
           </div>
         </div>
-      </div>
-    );
-  }
+      </Dialog>
+    ) : null;
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+  return (<>{(
+    <Dialog label="Personal DJ QR code" onClose={onClose} className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
       <div className="glass-panel rounded-3xl max-w-2xl w-full border border-purple-800/60 p-6 sm:p-8 relative shadow-2xl my-8">
-        <button
+        <button aria-label="Close dialog"
           onClick={onClose}
           className="absolute top-5 right-5 p-2 rounded-full bg-purple-950/80 hover:bg-purple-900 text-slate-400 hover:text-white transition-colors"
         >
@@ -187,10 +181,10 @@ export const DJPersonalQrModal: React.FC<DJPersonalQrModalProps> = ({ dj, onClos
           {/* Theme and Customization */}
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+              <span id="qr-styling-label" className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
                 QR Color Styling
-              </label>
-              <div className="grid grid-cols-2 gap-2">
+              </span>
+              <div role="group" aria-labelledby="qr-styling-label" className="grid grid-cols-2 gap-2">
                 {QR_THEMES.map((theme) => (
                   <button
                     key={theme.id}
@@ -218,11 +212,11 @@ export const DJPersonalQrModal: React.FC<DJPersonalQrModalProps> = ({ dj, onClos
 
             {/* Unique Link Field */}
             <div>
-              <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+              <label htmlFor="djpersonalqrmodal-your-direct-crowd-link" className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
                 Your Direct Crowd Link
               </label>
               <div className="flex items-center gap-1.5 bg-[#0c061e] border border-purple-900/60 rounded-xl p-1.5">
-                <input
+                <input id="djpersonalqrmodal-your-direct-crowd-link"
                   type="text"
                   readOnly
                   value={personalRequestUrl}
@@ -288,6 +282,6 @@ export const DJPersonalQrModal: React.FC<DJPersonalQrModalProps> = ({ dj, onClos
           </button>
         </div>
       </div>
-    </div>
-  );
+    </Dialog>
+  )}{projector}</>);
 };

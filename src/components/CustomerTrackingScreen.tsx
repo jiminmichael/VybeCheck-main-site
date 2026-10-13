@@ -1,3 +1,5 @@
+import { ApiResponseError } from '../services/apiResponse';
+import { TrackingActions } from './ui/TrackingActions';
 import React, { useState, useEffect } from 'react';
 import { 
   Clock, 
@@ -30,7 +32,10 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
   const [tokenInput, setTokenInput] = useState(initialToken || '');
   const [activeToken, setActiveToken] = useState(initialToken || '');
   const [request, setRequest] = useState<SongRequestItem | undefined>(undefined);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(!!initialToken);
+  const [lookupComplete, setLookupComplete] = useState(false);
+  const [lookupError, setLookupError] = useState('');
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   useEffect(() => {
     if (initialToken) {
@@ -40,43 +45,48 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
   }, [initialToken]);
 
   useEffect(() => {
-    const update = () => {
-      if (activeToken) {
-        const found = store.getRequestByToken(activeToken);
-        setRequest(found);
-      } else setRequest(undefined);
-    };
-
-    update();
-    const unsub = store.subscribe(update);
-    return unsub;
-  }, [activeToken]);
-
-  useEffect(() => {
-    if (!activeToken) return;
-    setRequest(store.getRequestByToken(activeToken));
     let cancelled = false;
-    const refresh = () => store.trackRequest(activeToken).then(found => { if (!cancelled) setRequest(found); }).catch(() => { if (!cancelled) setRequest(undefined); });
+    let busy = false;
+    setRequest(activeToken ? store.getRequestByToken(activeToken) : undefined);
+    setLookupComplete(false);
+    setLookupError('');
+    if (!activeToken) { setIsRefreshing(false); return; }
+    const refresh = async () => {
+      if (busy) return;
+      busy = true;
+      setIsRefreshing(true);
+      try {
+        const found = await store.trackRequest(activeToken);
+        if (!cancelled) { setRequest(found); setLookupError(''); }
+      } catch (error) {
+        if (!cancelled) {
+          if (error instanceof ApiResponseError && error.status === 404) { setRequest(undefined); setLookupError(''); }
+          else setLookupError('Could not check your request. Check your connection and try Refresh.');
+        }
+      } finally {
+        busy = false;
+        if (!cancelled) { setIsRefreshing(false); setLookupComplete(true); }
+      }
+    };
+    const unsub = store.subscribe(() => {
+      const found = store.getRequestByToken(activeToken);
+      if (found && !cancelled) setRequest(found);
+    });
     void refresh();
-    const timer = setInterval(refresh, 5000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [activeToken]);
+    const timer = setInterval(() => void refresh(), 5000);
+    return () => { cancelled = true; clearInterval(timer); unsub(); };
+  }, [activeToken, refreshVersion]);
 
   const handleSearchToken = (e: React.FormEvent) => {
     e.preventDefault();
     if (tokenInput.trim()) {
+      setRequest(undefined); setLookupComplete(false); setIsRefreshing(true);
       setActiveToken(tokenInput.trim());
+      setRefreshVersion(version => version + 1);
       onTrackToken(tokenInput.trim());
     }
   };
-
-  const handleManualRefresh = async () => {
-    if (!activeToken) return;
-    setIsRefreshing(true);
-    try { setRequest(await store.trackRequest(activeToken)); }
-    catch { setRequest(undefined); }
-    finally { setIsRefreshing(false); }
-  };
+  const handleManualRefresh = () => { if (activeToken) setRefreshVersion(version => version + 1); };
 
   const getStatusConfig = (status: RequestStatus) => {
     switch (status) {
@@ -150,7 +160,7 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
           <button
             onClick={handleManualRefresh}
             className="p-2 rounded-xl bg-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.1)] text-[#8F8C88] hover:text-[#F5F2ED] transition-colors"
-            title="Refresh"
+            title="Refresh" aria-label="Refresh request status" disabled={isRefreshing || !activeToken}
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
@@ -167,25 +177,28 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
 
       {/* SEARCH BAR FOR TOKEN */}
       <form onSubmit={handleSearchToken} className="mb-8">
+        <label htmlFor="tracking-code" className="block text-xs mb-2 text-[#8F8C88]">Tracking code</label>
         <div className="relative">
-          <input
+          <input id="tracking-code" aria-describedby="tracking-help"
             type="text"
-            placeholder="Tracking code (e.g. TRK-AFRO-9821)"
+            placeholder="Paste your full tracking code"
             value={tokenInput}
             onChange={(e) => setTokenInput(e.target.value)}
             className="form-input pr-10 font-mono text-xs"
           />
           <button
-            type="submit"
+            type="submit" aria-label="Look up tracking code"
             className="absolute right-0 top-1/2 -translate-y-1/2 text-[#8F8C88] hover:text-[#F5F2ED]"
           >
             <Search className="w-4 h-4" />
           </button>
         </div>
+        <p id="tracking-help" className="mt-2 text-xs text-[#8F8C88]">Paste the full code shown after submitting your request, including hyphens (for example, 550e8400-e29b-41d4-a716-446655440000).</p>
       </form>
 
       {/* TRACKING DETAILS CARD */}
-      {request ? (
+      {lookupError && <p role="alert" className="mb-4 text-sm text-rose-300">{lookupError}</p>}
+      {isRefreshing && !request ? <p role="status" className="p-8 text-center">Looking up your request…</p> : request ? (
         (() => {
           const config = getStatusConfig(request.status);
           return (
@@ -253,6 +266,8 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
                 </div>
               )}
 
+              <TrackingActions token={request.trackingToken} />
+
               {/* Bottom Actions */}
               <div className="text-center pt-2">
                 <button
@@ -269,10 +284,10 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
         <div className="bg-[rgba(255,255,255,0.06)] border border-[rgba(255,255,255,0.08)] rounded-2xl p-8 text-center space-y-4">
           <Music className="w-10 h-10 text-[#8F8C88] mx-auto opacity-50" />
           <p className="font-['Syne'] text-base font-bold text-[#F5F2ED]">
-            No Active Request Found
+            {lookupError ? 'Tracking temporarily unavailable' : activeToken && lookupComplete ? 'Request not found' : 'Enter your tracking code'}
           </p>
           <p className="text-xs text-[#8F8C88]">
-            Check your tracking code or submit a new song to the DJ.
+            {lookupError ? 'Try Refresh to check again.' : activeToken && lookupComplete ? 'Check the full code saved after submitting your request.' : 'Use the code or tracking link from your request confirmation.'}
           </p>
           <button
             onClick={onRequestNewSong}

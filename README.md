@@ -19,3 +19,5 @@ npm run build:functions
 ```
 
 The old `vybecheck.sqlite` file and `supabase_schema.sql` are retained as migration source/reference only. Neither is used by the running application.
+
+UI and accessibility regression checks are documented in [QA fixes and validation](QA_FIXES.md). Run `npm run test:ui` after installing the Playwright browser; the suite uses mock services and does not make live payments.

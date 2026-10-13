@@ -13,7 +13,8 @@
     "build:functions": "esbuild functions/index.ts --bundle --platform=node --format=cjs --packages=external --outfile=functions/lib/index.cjs",
     "test": "node --import tsx --test tests/*.test.ts",
     "migrate:firebase": "tsx scripts/migrate-to-firebase.ts",
-    "payout:finalize": "tsx scripts/finalize-payout.ts"
+    "payout:finalize": "tsx scripts/finalize-payout.ts",
+    "test:ui": "node tests/qa/ui.browser.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -36,6 +37,7 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@types/canvas-confetti": "^1.9.0",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
@@ -43,11 +45,13 @@
     "@types/sql.js": "^1.4.11",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
+    "jsqr": "^1.4.0",
+    "playwright": "^1.64.0",
+    "sql.js": "^1.14.2",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3",
-    "sql.js": "^1.14.2"
+    "vite": "^6.2.3"
   },
   "overrides": {
     "jwks-rsa": {

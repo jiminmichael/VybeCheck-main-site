@@ -1,3 +1,4 @@
+import { Dialog } from './ui/Dialog';
 import { parseSavedCheckout, SavedCheckout } from '../services/checkout';
 import React, { useState } from 'react';
 import { api } from '../services/firebase';
@@ -71,7 +72,7 @@ export const PaystackCheckoutModal: React.FC<PaystackCheckoutModalProps> = ({
 
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <Dialog label="Secure tip checkout" onClose={onClose} className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
       <div className="bg-[#0E0E12] border border-[rgba(255,255,255,0.14)] rounded-2xl max-w-md w-full shadow-2xl overflow-hidden relative">
         <div className="p-5 border-b border-[rgba(255,255,255,0.08)] flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -81,12 +82,12 @@ export const PaystackCheckoutModal: React.FC<PaystackCheckoutModalProps> = ({
               <h3 className="font-['Syne'] font-bold text-xs text-[#F5F2ED]">VybeCheck secure checkout</h3>
             </div>
           </div>
-          <button onClick={onClose} className="text-[#8F8C88] hover:text-[#F5F2ED]">
+          <button aria-label="Close dialog" onClick={onClose} className="text-[#8F8C88] hover:text-[#F5F2ED]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {error && <p role="alert" className="px-5 pt-4 text-sm text-rose-300">{error}</p>}
+        {error && <p id="checkout-error" role="alert" className="px-5 pt-4 text-sm text-rose-300">{error}</p>}
         {checkout && !paymentSuccess ? (
           <div className="p-6 space-y-4 text-center">
             <p className="text-sm">Resume your existing checkout{checkout.amount != null ? ` for ₦${checkout.amount.toLocaleString()}` : ''}. Its amount was fixed when you started it. Return here after paying to confirm.</p>
@@ -118,8 +119,8 @@ export const PaystackCheckoutModal: React.FC<PaystackCheckoutModalProps> = ({
 
             <form onSubmit={handlePay} className="space-y-4">
               <div>
-                <label className="text-[10px] uppercase tracking-wider text-[#8F8C88] block mb-1">Email</label>
-                <input
+                <label htmlFor="paystackcheckoutmodal-email" className="text-[10px] uppercase tracking-wider text-[#8F8C88] block mb-1">Email</label>
+                <input id="paystackcheckoutmodal-email" aria-describedby={error ? "checkout-error" : undefined}
                   type="email"
                   required
                   value={email}
@@ -145,6 +146,6 @@ export const PaystackCheckoutModal: React.FC<PaystackCheckoutModalProps> = ({
           </div>
         )}
       </div>
-    </div>
+    </Dialog>
   );
 };

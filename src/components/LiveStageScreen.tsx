@@ -1,3 +1,5 @@
+import { requestPageUrl } from '../services/requestLinks';
+import { Dialog } from './ui/Dialog';
 import { compareQueue } from '../services/queue';
 import React, { useState, useEffect } from 'react';
 import { QrCode, X, Crown, Radio } from 'lucide-react';
@@ -36,22 +38,24 @@ export const LiveStageScreen: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  const requestUrl = requestPageUrl(window.location.origin, currentEvent?.slug);
+  const [qrError, setQrError] = useState(false);
+
   // Generate QR
   useEffect(() => {
-    const slug = currentEvent?.slug || 'live-matrix';
-    const publicUrl = typeof window !== 'undefined'
-      ? `${window.location.origin}/#request/${slug}`
-      : `https://vybecheckwithbama.live/request/${slug}`;
-
-    QRCode.toDataURL(publicUrl, {
+    let cancelled = false;
+    setQrDataUrl(''); setQrError(false);
+    if (!requestUrl) return;
+    QRCode.toDataURL(requestUrl, {
       width: 320,
-      margin: 1.5,
+      margin: 4,
       color: {
         dark: '#070708',
         light: '#E6D3A3',
       },
-    }).then(setQrDataUrl).catch(() => {});
-  }, [currentEvent?.slug]);
+    }).then(url => { if (!cancelled) setQrDataUrl(url); }).catch(() => { if (!cancelled) setQrError(true); });
+    return () => { cancelled = true; };
+  }, [requestUrl]);
 
   const nowPlaying = requests.find((r) => r.status === 'playing');
   const upNext = requests
@@ -74,7 +78,7 @@ export const LiveStageScreen: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-6">
-          {store.isAuthenticatedDJ() && <button
+          {requestUrl && <button aria-label="Open Venue QR for the active session"
             onClick={() => setShowQrModal(true)}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[rgba(255,255,255,0.06)] border border-[rgba(255,255,255,0.1)] text-xs text-[#E6D3A3] hover:bg-[rgba(255,255,255,0.12)] transition-colors"
           >
@@ -122,6 +126,13 @@ export const LiveStageScreen: React.FC = () => {
           </div>
         )}
       </div>
+
+      <section aria-label="Request a song for this session" className="mx-auto mb-8 max-w-sm text-center space-y-3 w-full">
+        {requestUrl ? <>
+          {qrDataUrl ? <img src={qrDataUrl} alt={`Scan to request a song for ${currentEvent?.name}`} className="w-48 h-48 sm:w-56 sm:h-56 mx-auto rounded-xl" /> : <p role="status">{qrError ? 'QR code unavailable. Use the request link below.' : 'Preparing session QR code…'}</p>}
+          <a href={requestUrl} className="block break-all select-text text-[#E6D3A3] underline">Request a song for {currentEvent?.name}</a>
+        </> : <p role="status">Choose an active session to display its request QR code.</p>}
+      </section>
 
       {/* UP NEXT 2-COLUMN SECTION */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-16 pt-8 border-t border-[rgba(255,255,255,0.08)]">
@@ -194,9 +205,9 @@ export const LiveStageScreen: React.FC = () => {
 
       {/* QR MODAL */}
       {showQrModal && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+        <Dialog label="Live session request QR code" onClose={() => setShowQrModal(false)} className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-[#0E0E12] border border-[rgba(255,255,255,0.14)] rounded-3xl p-8 max-w-sm w-full text-center relative shadow-2xl">
-            <button
+            <button aria-label="Close dialog"
               onClick={() => setShowQrModal(false)}
               className="absolute top-4 right-4 text-[#8F8C88] hover:text-[#F5F2ED]"
             >
@@ -216,11 +227,12 @@ export const LiveStageScreen: React.FC = () => {
               </div>
             )}
 
+            <a href={requestUrl} className="block break-all underline text-[#E6D3A3] mb-3">Open session request page</a>
             <p className="text-xs text-[#8F8C88]">
               Scan with your smartphone camera to submit requests directly to the DJ.
             </p>
           </div>
-        </div>
+        </Dialog>
       )}
     </div>
   );

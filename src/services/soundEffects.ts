@@ -1,11 +1,16 @@
 // Web Audio API Synthesizer for Club Booth Sound Notifications
 
-class DJBoothSoundEngine {
+export class DJBoothSoundEngine {
   private audioCtx: AudioContext | null = null;
   private soundEnabled: boolean = true;
+  private preferenceStorage?: Pick<Storage, 'getItem' | 'setItem'>;
+  private preferenceListeners = new Set<() => void>();
 
-  constructor() {
-    // Lazy audio context init on user interaction
+  constructor(storage?: Pick<Storage, 'getItem' | 'setItem'>) {
+    try {
+      this.preferenceStorage = storage || (typeof window !== 'undefined' ? window.localStorage : undefined);
+      this.soundEnabled = this.preferenceStorage?.getItem('vybecheck_sound_enabled') !== 'false';
+    } catch { /* Storage may be unavailable. */ }
   }
 
   private getAudioContext(): AudioContext | null {
@@ -22,12 +27,17 @@ class DJBoothSoundEngine {
     return this.audioCtx;
   }
 
+  public subscribePreference(listener: () => void) {
+    this.preferenceListeners.add(listener);
+    return () => { this.preferenceListeners.delete(listener); };
+  }
+
   public isEnabled(): boolean {
     return this.soundEnabled;
   }
 
   public toggleSound(): boolean {
-    this.soundEnabled = !this.soundEnabled;
+    this.setSoundEnabled(!this.soundEnabled);
     if (this.soundEnabled) {
       this.playTestBeep();
     }
@@ -36,6 +46,8 @@ class DJBoothSoundEngine {
 
   public setSoundEnabled(enabled: boolean) {
     this.soundEnabled = enabled;
+    try { this.preferenceStorage?.setItem('vybecheck_sound_enabled', String(enabled)); } catch { /* Keep the in-memory preference. */ }
+    this.preferenceListeners.forEach(listener => listener());
   }
 
   // Two-tone smooth melodic chime for standard song request

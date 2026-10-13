@@ -1,3 +1,4 @@
+import { decodeLinkIdentifier } from './services/requestLinks';
 import { trackScreen, trackEvent } from './services/analytics';
 import { savedTrackingToken, saveTrackingToken } from './services/tracking';
 import React, { useState, useEffect } from 'react';
@@ -72,12 +73,12 @@ export default function App() {
         }
         setCurrentView(hash === '#profile' ? 'dj_profile' : 'dj_dashboard');
       } else if (hash.startsWith('#track/')) {
-        const token = hash.slice(7);
+        const token = decodeLinkIdentifier(hash.slice(7));
         saveTrackingToken(token); setActiveTrackingToken(token); setCurrentView('customer_tracking');
       } else if (hash === '#track') setCurrentView('customer_tracking');
       else if (hash === '#live') setCurrentView('live_stage');
       else {
-        if (hash.startsWith('#request/')) store.setCurrentEventBySlug(hash.slice(9).trim());
+        if (hash.startsWith('#request/')) store.setCurrentEventBySlug(decodeLinkIdentifier(hash.slice(9)).trim());
         else if (hash.startsWith('#request?')) store.setCurrentEventBySlug(new URLSearchParams(hash.split('?')[1]).get('dj') || '');
         else store.setCurrentEventBySlug('');
         setCurrentView('public_request');
@@ -319,7 +320,7 @@ export default function App() {
               </div>
             </div>
 
-            <button
+            <button aria-label="Dismiss notification"
               onClick={() => handleDismissNotification(notif.id)}
               className="text-[#8F8C88] hover:text-[#F5F2ED] p-1 transition-colors"
             >

@@ -1,3 +1,4 @@
+import { Dialog } from './ui/Dialog';
 import React, { useState, useEffect } from 'react';
 import { QrCode, X, Copy, Check, Download, Printer } from 'lucide-react';
 import QRCode from 'qrcode';
@@ -47,9 +48,9 @@ export const EventQrModal: React.FC<EventQrModalProps> = ({ event, dj, onClose }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <Dialog label="Venue request QR code" onClose={onClose} className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
       <div className="bg-[#0E0E12] border border-[rgba(255,255,255,0.14)] rounded-2xl max-w-sm w-full p-6 sm:p-8 relative text-center shadow-2xl space-y-5">
-        <button
+        <button aria-label="Close dialog"
           onClick={onClose}
           className="absolute top-4 right-4 text-[#8F8C88] hover:text-[#F5F2ED]"
         >
@@ -76,7 +77,7 @@ export const EventQrModal: React.FC<EventQrModalProps> = ({ event, dj, onClose }
 
         <div className="space-y-2">
           <div className="flex items-center gap-2 bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] rounded-xl p-2 text-xs">
-            <input
+            <input id="eventqrmodal-field-0" aria-label="Session request link"
               type="text"
               readOnly
               value={requestUrl}
@@ -110,6 +111,6 @@ export const EventQrModal: React.FC<EventQrModalProps> = ({ event, dj, onClose }
           </div>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 };

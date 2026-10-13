@@ -1,3 +1,4 @@
+import { Dialog } from './ui/Dialog';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Mic, 
@@ -38,20 +39,25 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const animIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const openRef = useRef(isOpen);
+  openRef.current = isOpen;
+  const recognitionVersion = useRef(0);
 
   useEffect(() => {
+    openRef.current = isOpen;
     const unsub = musicService.subscribePreview((trackId, isPlaying) => {
       setIsPlayingPreview(isPlaying);
     });
     return () => {
       unsub();
+      openRef.current = false; recognitionVersion.current++;
       stopListening();
     };
   }, []);
 
   useEffect(() => {
     if (!isOpen) {
+      recognitionVersion.current++;
       stopListening();
       setDetectedSong(null);
       setErrorMsg(null);
@@ -83,6 +89,7 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!openRef.current) { stream.getTracks().forEach(track => track.stop()); return; }
       streamRef.current = stream;
 
       const mediaRecorder = new MediaRecorder(stream);
@@ -96,7 +103,7 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' });
-        await processAudioForIdentification(audioBlob);
+        if (openRef.current) await processAudioForIdentification(audioBlob);
       };
 
       mediaRecorder.start();
@@ -139,16 +146,17 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
   };
 
   const processAudioForIdentification = async (audioBlob: Blob) => {
+    const version = ++recognitionVersion.current;
     setIsAnalyzing(true);
     setErrorMsg(null);
 
     try {
       const result = await musicService.identifyAudio(audioBlob);
-      setDetectedSong(result);
+      if (openRef.current && version === recognitionVersion.current) setDetectedSong(result);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Could not recognize the song. Please try holding your device closer.');
+      if (openRef.current && version === recognitionVersion.current) setErrorMsg(err.message || 'Could not recognize the song. Please try holding your device closer.');
     } finally {
-      setIsAnalyzing(false);
+      if (openRef.current && version === recognitionVersion.current) setIsAnalyzing(false);
     }
   };
 
@@ -156,10 +164,11 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    e.target.value = '';
+    if (!/^audio\//.test(file.type) || file.size > 10 * 1024 * 1024 || !file.size) { setErrorMsg('Choose an audio file up to 10 MB (MP3, WAV, MP4, OGG, WebM, AAC, or FLAC).'); return; }
     setErrorMsg(null);
     setDetectedSong(null);
-    setIsAnalyzing(true);
-    processAudioForIdentification(file);
+    void processAudioForIdentification(file);
   };
 
   const handleSongExample = async (sampleTitle: string, sampleArtist: string, sampleGenre: any) => {
@@ -194,10 +203,10 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+    <Dialog label="Audio song recognition" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
       <div className="bg-[#0E0E12] border border-[rgba(255,255,255,0.14)] w-full max-w-md rounded-2xl p-6 sm:p-8 relative shadow-2xl space-y-6">
         {/* Close Button */}
-        <button
+        <button aria-label="Close dialog"
           onClick={onClose}
           className="absolute top-5 right-5 text-[#8F8C88] hover:text-[#F5F2ED]"
         >
@@ -263,6 +272,13 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
               </div>
             )}
 
+            <div className="w-full space-y-2">
+              <label htmlFor="audio-sample" className="block text-xs text-[#E6D3A3]">Upload an audio sample</label>
+              <input id="audio-sample" type="file" accept="audio/mpeg,audio/wav,audio/mp4,audio/ogg,audio/webm,audio/aac,audio/flac" onChange={handleFileUpload}
+                disabled={isAnalyzing || isListening} aria-describedby={`audio-upload-help${errorMsg ? ' audio-error' : ''}`} className="block w-full text-xs" />
+              <p id="audio-upload-help" className="text-xs text-[#8F8C88]">Choose a short recording up to 10 MB. Uploaded samples use the same recognition service as the microphone.</p>
+              {isAnalyzing && <p role="status" className="text-xs">Identifying audio…</p>}
+            </div>
             {/* Quick Anthem Samples */}
             <div className="w-full pt-4 border-t border-[rgba(255,255,255,0.08)] text-center space-y-2">
               <span className="text-[10px] uppercase tracking-wider text-[#8F8C88] block">
@@ -297,7 +313,7 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
 
         {/* Error State */}
         {errorMsg && (
-          <div className="p-3 rounded-xl bg-[rgba(139,58,58,0.2)] border border-[rgba(139,58,58,0.4)] text-[#F5F2ED] text-xs flex items-center gap-2">
+          <div id="audio-error" role="alert" className="p-3 rounded-xl bg-[rgba(139,58,58,0.2)] border border-[rgba(139,58,58,0.4)] text-[#F5F2ED] text-xs flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
             <span>{errorMsg}</span>
           </div>
@@ -353,6 +369,6 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
           </div>
         )}
       </div>
-    </div>
+    </Dialog>
   );
 };

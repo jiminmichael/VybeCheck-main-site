@@ -1,3 +1,4 @@
+import { Dialog } from './ui/Dialog';
 import { compareQueue } from '../services/queue';
 import React, { useState, useEffect } from 'react';
 import { 
@@ -52,6 +53,8 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
   const [newEventName, setNewEventName] = useState('');
   const [newEventVenue, setNewEventVenue] = useState('');
   const [eventError, setEventError] = useState<string | null>(null);
+
+  useEffect(() => soundEngine.subscribePreference(() => setSoundEnabled(soundEngine.isEnabled())), []);
 
   useEffect(() => {
     const update = () => {
@@ -249,13 +252,13 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
 
       {/* QUICK CONTROLS & SEARCH BAR */}
       <div className="bg-[#0E0E12] border border-[rgba(255,255,255,0.08)] rounded-xl p-3.5 mb-4 flex flex-wrap items-center gap-2">
-        <select value={currentEvent?.id || ''} onChange={(event) => store.setCurrentEvent(event.target.value)} className="form-input text-xs flex-1 min-w-[180px]">
+        <select id="djdashboard-field-0" aria-label="Active session" value={currentEvent?.id || ''} onChange={(event) => store.setCurrentEvent(event.target.value)} className="form-input text-xs flex-1 min-w-[180px]">
           {events.map((event) => <option key={event.id} value={event.id}>{event.name}</option>)}
         </select>
-        <input value={newEventName} onChange={(event) => setNewEventName(event.target.value)} placeholder="New event name" className="form-input text-xs flex-1 min-w-[160px]" />
-        <input value={newEventVenue} onChange={(event) => setNewEventVenue(event.target.value)} placeholder="Venue" className="form-input text-xs flex-1 min-w-[160px]" />
+        <input id="djdashboard-field-1" aria-label="New event name" aria-describedby={eventError ? "event-error" : undefined} value={newEventName} onChange={(event) => setNewEventName(event.target.value)} placeholder="New event name" className="form-input text-xs flex-1 min-w-[160px]" />
+        <input id="djdashboard-field-2" aria-label="Event venue" aria-describedby={eventError ? "event-error" : undefined} value={newEventVenue} onChange={(event) => setNewEventVenue(event.target.value)} placeholder="Venue" className="form-input text-xs flex-1 min-w-[160px]" />
         <button onClick={handleCreateEvent} className="btn btn-gold text-xs">Create Event</button>
-        {eventError && <span className="text-xs text-rose-400 basis-full">{eventError}</span>}
+        {eventError && <span id="event-error" role="alert" className="text-xs text-rose-400 basis-full">{eventError}</span>}
       </div>
       <div className="bg-[#0E0E12] border border-[rgba(255,255,255,0.08)] rounded-xl p-3.5 mb-8 flex flex-wrap items-center justify-between gap-3">
         {/* Quick Toggles */}
@@ -313,7 +316,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
 
         {/* Search Input */}
         <div className="relative min-w-[220px]">
-          <input
+          <input id="djdashboard-field-3" aria-label="Search requests"
             type="text"
             placeholder="Filter requests..."
             value={searchQuery}
@@ -393,7 +396,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
                     >
                       <span>Play Now</span>
                     </button>
-                    <button
+                    <button aria-label={`Decline ${req.song} request`}
                       onClick={() => setRejectingId(req.id)}
                       className="p-2 rounded-lg bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] text-[#8F8C88] hover:text-[#8B3A3A] hover:border-[#8B3A3A] transition-colors"
                       title="Reject"
@@ -566,7 +569,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
                       <Play className="w-3 h-3 fill-current" />
                       <span>Play</span>
                     </button>
-                    <button
+                    <button aria-label={`Move ${req.song} up in the queue`}
                       onClick={() => handleMoveUp(req.id)}
                       disabled={!store.canMoveQueueItem(req.id, 'up')}
                       className="p-1.5 rounded-lg bg-[rgba(255,255,255,0.04)] text-[#8F8C88] hover:text-[#F5F2ED] disabled:opacity-20 transition-colors"
@@ -574,7 +577,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
                     >
                       <ArrowUp className="w-3 h-3" />
                     </button>
-                    <button
+                    <button aria-label={`Move ${req.song} down in the queue`}
                       onClick={() => handleMoveDown(req.id)}
                       disabled={!store.canMoveQueueItem(req.id, 'down')}
                       className="p-1.5 rounded-lg bg-[rgba(255,255,255,0.04)] text-[#8F8C88] hover:text-[#F5F2ED] disabled:opacity-20 transition-colors"
@@ -582,7 +585,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
                     >
                       <ArrowDown className="w-3 h-3" />
                     </button>
-                    <button
+                    <button aria-label={`Decline ${req.song} request`}
                       onClick={() => setRejectingId(req.id)}
                       className="p-1.5 rounded-lg bg-[rgba(255,255,255,0.04)] text-[#8F8C88] hover:text-[#8B3A3A] transition-colors"
                       title="Remove"
@@ -599,7 +602,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
 
       {/* Reject Modal */}
       {rejectingId && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <Dialog label="Decline song request" onClose={() => setRejectingId(null)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-[#0E0E12] border border-[#8B3A3A]/40 rounded-2xl p-6 max-w-md w-full space-y-4">
             <div className="flex items-center gap-2 text-[#8B3A3A]">
               <AlertTriangle className="w-5 h-5" />
@@ -612,7 +615,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
               Select a reason for declining this request:
             </p>
 
-            <select
+            <select id="djdashboard-field-4" aria-label="Reason for declining the request"
               value={rejectReason}
               onChange={(e) => setRejectReason(e.target.value)}
               className="w-full bg-[rgba(255,255,255,0.06)] border border-[rgba(255,255,255,0.14)] rounded-xl p-3 text-xs text-[#F5F2ED] outline-none"
@@ -638,7 +641,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
               </button>
             </div>
           </div>
-        </div>
+        </Dialog>
       )}
 
       {/* Instant Withdrawal Modal */}

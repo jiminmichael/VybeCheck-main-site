@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Radio, 
-  Volume2, 
-  VolumeX, 
-  Sliders, 
-  Tv, 
-  Smartphone, 
-  QrCode, 
+import {
+  Radio,
+  Volume2,
+  VolumeX,
+  Sliders,
+  Tv,
+  Smartphone,
+  QrCode,
   Zap,
   Activity,
   LogOut,
@@ -38,6 +38,8 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
   const [currentDJ, setCurrentDJ] = useState<DJProfile | undefined>(store.isAuthenticatedDJ() ? store.getCurrentDJ() : undefined);
   const [unreadNotifs, setUnreadNotifs] = useState(0);
 
+  useEffect(() => soundEngine.subscribePreference(() => setSoundOn(soundEngine.isEnabled())), []);
+
   useEffect(() => {
     const unsub = store.subscribe(() => {
       setCurrentEvent(store.getCurrentEvent());
@@ -60,9 +62,9 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
   return (
     <header className="sticky top-0 z-50 w-full bg-[#070708]/90 backdrop-blur-2xl border-b border-[rgba(255,255,255,0.08)]">
       {/* Top Bar: Brand & Controls */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-4">
         {/* Brand Logo */}
-        <div 
+        <button type="button"
           onClick={() => onNavigate('public_request')}
           className="cursor-pointer flex items-center gap-3 group"
         >
@@ -82,12 +84,12 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
               <span>LIVE SESSION • {currentDJ?.defaultVenue?.split(',')[0] || 'Club Matrix'}</span>
             </div>
           </div>
-        </div>
+        </button>
 
         {/* Quick Actions & Profile */}
         <div className="flex items-center gap-2 sm:gap-3">
           {/* QR Code Launcher */}
-          {currentDJ && <button
+          {currentDJ && <button aria-label="Open event QR code"
             onClick={onOpenQr}
             className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider px-3 py-1.5 rounded-lg bg-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.09)] text-[#F5F2ED] border border-[rgba(255,255,255,0.08)] transition-colors"
           >
@@ -98,7 +100,7 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
           {/* DJ Account */}
           {currentDJ ? (
             <div className="flex items-center gap-2 bg-[rgba(255,255,255,0.06)] border border-[rgba(255,255,255,0.08)] rounded-lg p-1 pl-2">
-              <div 
+              <button type="button"
                 onClick={() => onNavigate('dj_profile')}
                 className="cursor-pointer flex items-center gap-2 pr-1 group"
                 title="View & Edit DJ Profile"
@@ -109,8 +111,8 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
                 <span className="text-xs font-medium text-[#F5F2ED] group-hover:text-[#4D7CFE] hidden md:inline truncate max-w-[100px]">
                   {currentDJ.stageName}
                 </span>
-              </div>
-              <button
+              </button>
+              <button aria-label="Log Out"
                 onClick={handleLogout}
                 title="Log Out"
                 className="p-1 rounded text-[#8F8C88] hover:text-[#8B3A3A] transition-colors"
@@ -131,8 +133,8 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
           )}
 
           {/* Sound Toggle */}
-          <button
-            onClick={handleToggleSound}
+          <button aria-label={soundOn ? "Mute sound alerts" : "Enable sound alerts"}
+            aria-pressed={soundOn} onClick={handleToggleSound}
             className={`btn-icon ${soundOn ? 'text-[#4D7CFE]' : 'text-[#8F8C88]'}`}
             title={soundOn ? 'Sound alerts enabled' : 'Sound alerts muted'}
           >

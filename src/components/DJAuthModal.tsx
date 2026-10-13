@@ -1,3 +1,4 @@
+import { Dialog } from './ui/Dialog';
 import React, { useEffect, useState } from 'react';
 import { X, AlertCircle, Headphones } from 'lucide-react';
 import { isSignInWithEmailLink, sendPasswordResetEmail } from 'firebase/auth';
@@ -58,7 +59,7 @@ export const DJAuthModal: React.FC<DJAuthModalProps> = ({ isOpen, onClose, onSuc
     void run(() => store.loginWithPassword(email.trim(), password));
   }
   return <>
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+    <Dialog label="DJ account sign-in and registration" onClose={onClose} className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
       <div className="bg-[#0E0E12] border border-white/15 rounded-2xl max-w-md w-full p-6 my-8 relative space-y-5">
         <button aria-label="Close sign-in" onClick={onClose} disabled={busy} className="absolute top-5 right-5 text-[#8F8C88]"><X className="w-5 h-5" /></button>
         <div className="flex items-center gap-3">
@@ -68,25 +69,25 @@ export const DJAuthModal: React.FC<DJAuthModalProps> = ({ isOpen, onClose, onSuc
         {mode !== 'complete' && <div className="flex gap-2">
           {(['login', 'signup', 'link'] as const).map(tab => <button key={tab} type="button" disabled={busy} onClick={() => { setMode(tab); setError(''); setMessage(''); }} className={`flex-1 rounded-lg py-2 text-xs ${mode === tab ? 'bg-[#C6A15B] text-black' : 'bg-white/5'}`}>{tab === 'login' ? 'Sign in' : tab === 'signup' ? 'Register' : 'Email link'}</button>)}
         </div>}
-        {error && <div role="alert" className="flex gap-2 text-sm text-rose-300 bg-rose-950/30 rounded-lg p-3"><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
+        {error && <div id="auth-error" role="alert" className="flex gap-2 text-sm text-rose-300 bg-rose-950/30 rounded-lg p-3"><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
         {message && <p role="status" className="text-sm text-emerald-300">{message}</p>}
         {(mode === 'login' || mode === 'signup') && <button className="btn btn-full border border-white/20" disabled={busy} onClick={() => void run(() => store.loginWithSocial('google', { stageName: stageName.trim() || undefined }))}>Continue with Google</button>}
         <form onSubmit={submit} className="space-y-3">
           {mode === 'signup' && <>
-            <label className="block text-xs">Full name<input className="form-input mt-1" required value={name} onChange={e => setName(e.target.value)} autoComplete="name" /></label>
-            <label className="block text-xs">DJ stage name<input className="form-input mt-1" required value={stageName} onChange={e => setStageName(e.target.value)} /></label>
-            <label className="block text-xs">DJ handle<input className="form-input mt-1" required minLength={3} maxLength={40} pattern="[a-z0-9_-]+" value={handle} onChange={e => setHandle(e.target.value.toLowerCase())} /></label>
-            <label className="block text-xs">Venue<input className="form-input mt-1" value={venue} onChange={e => setVenue(e.target.value)} /></label>
+            <label className="block text-xs">Full name<input aria-describedby={error ? "auth-error" : undefined} className="form-input mt-1" required value={name} onChange={e => setName(e.target.value)} autoComplete="name" /></label>
+            <label className="block text-xs">DJ stage name<input aria-describedby={error ? "auth-error" : undefined} className="form-input mt-1" required value={stageName} onChange={e => setStageName(e.target.value)} /></label>
+            <label className="block text-xs">DJ handle<input aria-describedby={error ? "auth-error" : undefined} className="form-input mt-1" required minLength={3} maxLength={40} pattern="[a-z0-9_-]+" value={handle} onChange={e => setHandle(e.target.value.toLowerCase())} /></label>
+            <label className="block text-xs">Venue<input aria-describedby={error ? "auth-error" : undefined} className="form-input mt-1" value={venue} onChange={e => setVenue(e.target.value)} /></label>
             <button type="button" className="text-sm text-[#C6A15B]" onClick={() => setUploadOpen(true)}>{avatarUrl ? 'Change profile photo' : 'Add profile photo'}</button>
           </>}
           {mode === 'complete' && <p className="text-xs text-[#8F8C88]">Confirm the email address that received this link.</p>}
-          <label className="block text-xs">Email<input className="form-input mt-1" type="email" required autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
-          {(mode === 'signup' || mode === 'login') && <label className="block text-xs">Password<input className="form-input mt-1" type="password" required minLength={mode === 'signup' ? 6 : undefined} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} /></label>}
+          <label className="block text-xs">Email<input aria-describedby={error ? "auth-error" : undefined} className="form-input mt-1" type="email" required autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
+          {(mode === 'signup' || mode === 'login') && <label className="block text-xs">Password<input aria-describedby={error ? "auth-error" : undefined} className="form-input mt-1" type="password" required minLength={mode === 'signup' ? 6 : undefined} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} /></label>}
           <button type="submit" className="btn btn-primary btn-full" disabled={busy}>{busy ? 'Please wait…' : mode === 'signup' ? 'Create account' : mode === 'link' ? 'Send sign-in link' : 'Sign in'}</button>
           {mode === 'login' && <button type="button" disabled={busy} className="text-xs text-[#C6A15B]" onClick={() => void run(async () => { if (!email.trim()) throw new Error('Enter your email first.'); await sendPasswordResetEmail(auth, email.trim()); return { success: true, message: 'Check your inbox for password reset instructions.' }; })}>Reset password</button>}
         </form>
       </div>
-    </div>
+    </Dialog>
     <DJImageUploadModal isOpen={uploadOpen} title="Profile photo" type="avatar" currentImageUrl={avatarUrl} onClose={() => setUploadOpen(false)} onSelectImage={setAvatarUrl} />
   </>;
 };

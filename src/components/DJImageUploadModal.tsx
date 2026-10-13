@@ -1,3 +1,4 @@
+import { Dialog } from './ui/Dialog';
 import React, { useState, useRef } from 'react';
 import { X, Upload, Check, Link2, Camera } from 'lucide-react';
 
@@ -97,9 +98,9 @@ export const DJImageUploadModal: React.FC<DJImageUploadModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <Dialog label="Choose DJ image" onClose={onClose} className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
       <div className="bg-[#0E0E12] border border-[rgba(255,255,255,0.14)] rounded-2xl max-w-md w-full p-6 relative shadow-2xl space-y-5">
-        <button
+        <button aria-label="Close dialog"
           onClick={onClose}
           className="absolute top-4 right-4 text-[#8F8C88] hover:text-[#F5F2ED]"
         >
@@ -160,7 +161,7 @@ export const DJImageUploadModal: React.FC<DJImageUploadModalProps> = ({
         {/* Upload Tab */}
         {activeTab === 'upload' && (
           <div className="space-y-4">
-            <input
+            <input id="djimageuploadmodal-field-0" aria-label="Upload DJ image" aria-describedby={error ? "image-error" : undefined}
               type="file"
               ref={fileInputRef}
               accept="image/*"
@@ -168,7 +169,7 @@ export const DJImageUploadModal: React.FC<DJImageUploadModalProps> = ({
               className="hidden"
             />
 
-            <div
+            <button type="button"
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={handleDrop}
@@ -191,7 +192,7 @@ export const DJImageUploadModal: React.FC<DJImageUploadModalProps> = ({
                   <p className="text-[10px]">JPG, PNG, WebP</p>
                 </div>
               )}
-            </div>
+            </button>
           </div>
         )}
 
@@ -224,7 +225,8 @@ export const DJImageUploadModal: React.FC<DJImageUploadModalProps> = ({
         {/* URL Tab */}
         {activeTab === 'url' && (
           <div className="space-y-3">
-            <input
+            <label htmlFor="djimageuploadmodal-field-1" className="block text-xs text-[#8F8C88]">Image URL</label>
+            <input id="djimageuploadmodal-field-1" aria-describedby={error ? "image-error" : undefined}
               type="url"
               placeholder="https://example.com/photo.jpg"
               value={customUrl}
@@ -240,7 +242,7 @@ export const DJImageUploadModal: React.FC<DJImageUploadModalProps> = ({
           </div>
         )}
 
-        {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
+        {error && <p id="image-error" role="alert" className="text-sm text-rose-300">{error}</p>}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-[rgba(255,255,255,0.08)]">
           <button
             type="button"
@@ -259,6 +261,6 @@ export const DJImageUploadModal: React.FC<DJImageUploadModalProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 };

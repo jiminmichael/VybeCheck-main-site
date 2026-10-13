@@ -1,3 +1,7 @@
+export class ApiResponseError extends Error {
+  constructor(message: string, public status: number) { super(message); }
+}
+
 export async function readApiResponse<T>(response: Response, path: string): Promise<T> {
   const body = await response.text();
   let result: any;
@@ -13,7 +17,7 @@ export async function readApiResponse<T>(response: Response, path: string): Prom
     throw new Error(`The server returned an unexpected response for ${path}.`);
   }
   if (!response.ok || result.success === false) {
-    throw new Error(typeof result.error === 'string' ? result.error : `Request failed (HTTP ${response.status}).`);
+    throw new ApiResponseError(typeof result.error === 'string' ? result.error : `Request failed (HTTP ${response.status}).`, response.status);
   }
   return result as T;
 }

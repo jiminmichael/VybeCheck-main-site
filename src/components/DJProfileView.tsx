@@ -1,3 +1,4 @@
+import { Dialog } from './ui/Dialog';
 import React, { useState, useEffect } from 'react';
 import { 
   QrCode, 
@@ -282,9 +283,8 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
     );
   }
 
-  if (fullProjectorMode) {
-    return (
-      <div className="fixed inset-0 z-50 bg-[#070708] flex flex-col items-center justify-center p-8 text-center select-none">
+  const projector = fullProjectorMode ? (
+      <Dialog label="DJ request projector" onClose={() => setFullProjectorMode(false)} className="fixed inset-0 z-50 bg-[#070708] flex flex-col items-center justify-center p-8 text-center select-none">
         <button
           onClick={() => setFullProjectorMode(false)}
           className="absolute top-6 right-6 btn btn-ghost text-xs"
@@ -318,13 +318,12 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
             {currentDJ.customQrTagline || 'SCAN WITH PHONE TO REQUEST TRACKS & VIP TIP'}
           </p>
         </div>
-      </div>
-    );
-  }
+      </Dialog>
+    ) : null;
 
-  return (
+  return (<>{(
     <div className="max-w-[1200px] mx-auto px-6 py-10 space-y-8">
-      {saveError && <p role="alert" className="p-3 text-rose-300">{saveError}</p>}
+      {saveError && <p id="profile-error" role="alert" className="p-3 text-rose-300">{saveError}</p>}
       {saveSuccess && (
         <div className="p-4 rounded-xl bg-[rgba(46,139,122,0.15)] border border-[#2E8B7A] text-[#F5F2ED] text-xs flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -375,14 +374,14 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
           <div className="flex items-end gap-4">
             <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl overflow-hidden border-2 border-[#070708] bg-[#0E0E12] shadow-2xl relative flex-shrink-0 group">
               <img src={currentDJ.avatarUrl} alt={currentDJ.stageName} className="w-full h-full object-cover" />
-              <button
+              <button aria-label="Change DJ profile photo"
                 onClick={() => setImageModalState({
                   isOpen: true,
                   type: 'avatar',
                   title: 'Upload DJ Photo',
                   currentUrl: currentDJ.avatarUrl,
                 })}
-                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white"
+                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity flex items-center justify-center text-white"
               >
                 <Camera className="w-5 h-5 text-[#4D7CFE]" />
               </button>
@@ -516,10 +515,10 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
+                  <label htmlFor="djprofileview-stage-name" className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
                     Stage Name
                   </label>
-                  <input
+                  <input id="djprofileview-stage-name" aria-describedby={saveError ? "profile-error" : undefined}
                     type="text"
                     disabled={!isEditing}
                     value={stageName}
@@ -529,10 +528,10 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
+                  <label htmlFor="djprofileview-handle" className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
                     Handle
                   </label>
-                  <input
+                  <input id="djprofileview-handle" aria-describedby={saveError ? "profile-error" : undefined}
                     type="text"
                     disabled={!isEditing}
                     value={handle}
@@ -543,10 +542,10 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
               </div>
 
               <div>
-                <label className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
+                <label htmlFor="djprofileview-default-venue-residency" className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
                   Default Venue / Residency
                 </label>
-                <input
+                <input id="djprofileview-default-venue-residency" aria-describedby={saveError ? "profile-error" : undefined}
                   type="text"
                   disabled={!isEditing}
                   value={defaultVenue}
@@ -556,10 +555,10 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
               </div>
 
               <div>
-                <label className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
+                <span id="profile-genres-label" className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
                   Specialty Genres
-                </label>
-                <div className="flex flex-wrap gap-1.5">
+                </span>
+                <div role="group" aria-labelledby="profile-genres-label" className="flex flex-wrap gap-1.5">
                   {AVAILABLE_GENRES.map((g) => {
                     const isSel = selectedGenres.includes(g);
                     return (
@@ -600,11 +599,11 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
+                  <label htmlFor="djprofileview-settlement-bank" className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
                     Settlement Bank
                   </label>
                   {isEditing ? (
-                    <select
+                    <select id="djprofileview-settlement-bank" aria-describedby={saveError ? "profile-error" : undefined}
                       value={bankCode}
                       onChange={(e) => {
                         const code = e.target.value;
@@ -622,7 +621,7 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
                       ))}
                     </select>
                   ) : (
-                    <input
+                    <input id="djprofileview-settlement-bank" aria-describedby={saveError ? "profile-error" : undefined}
                       type="text"
                       disabled
                       value={bankName}
@@ -632,10 +631,10 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
+                  <label htmlFor="djprofileview-10-digit-account-number" className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
                     10-Digit Account Number
                   </label>
-                  <input
+                  <input id="djprofileview-10-digit-account-number" aria-describedby={saveError ? "profile-error" : undefined}
                     type="text"
                     maxLength={10}
                     disabled={!isEditing}
@@ -647,10 +646,10 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
               </div>
 
               <div>
-                <label className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
+                <label htmlFor="djprofileview-account-holder-name" className="text-[11px] uppercase tracking-wider text-[#8F8C88] block mb-2">
                   Account Holder Name
                 </label>
-                <input
+                <input id="djprofileview-account-holder-name" aria-describedby={saveError ? "profile-error" : undefined}
                   type="text"
                   disabled={!isEditing}
                   value={accountName}
@@ -793,5 +792,5 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
         }}
       />
     </div>
-  );
+  )}{projector}</>);
 };
