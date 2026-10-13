@@ -1,3 +1,5 @@
+import { trackScreen, trackEvent } from './services/analytics';
+import { savedTrackingToken, saveTrackingToken } from './services/tracking';
 import React, { useState, useEffect } from 'react';
 import { isSignInWithEmailLink } from 'firebase/auth';
 import { auth } from './services/firebase';
@@ -21,7 +23,7 @@ export default function App() {
     'public_request' | 'customer_tracking' | 'dj_dashboard' | 'live_stage' | 'dj_profile'
   >('public_request');
 
-  const [activeTrackingToken, setActiveTrackingToken] = useState<string>('');
+  const [activeTrackingToken, setActiveTrackingToken] = useState<string>(savedTrackingToken);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [personalQrModalOpen, setPersonalQrModalOpen] = useState(false);
   
@@ -54,31 +56,43 @@ export default function App() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Listen to hash route changes (e.g. #request/djspinall or #request?dj=djbama)
+  // Resolve protected routes only after Firebase has restored the DJ profile.
   useEffect(() => {
-    const handleHash = async () => {
+    let lastSession = '';
+    const handleHash = () => {
       const hash = window.location.hash;
-      if (hash.startsWith('#request/')) {
-        const slug = hash.replace('#request/', '').trim();
-        if (slug) {
-          store.setCurrentEventBySlug(slug);
-          setCurrentView('public_request');
+      if (hash === '#dashboard' || hash === '#dj' || hash === '#profile') {
+        if (!store.isAuthReady()) return;
+        if (!store.isAuthenticatedDJ()) { setCurrentView('public_request'); handleOpenAuth('login'); return; }
+        setAuthModal({ isOpen: false, mode: 'login' });
+        if (hash !== '#profile') {
+          const ownEvent = store.getEvents().find(event => event.djId === store.getCurrentDJ()?.id);
+          if (ownEvent && store.getCurrentEvent()?.id !== ownEvent.id) store.setCurrentEvent(ownEvent.id);
         }
-      } else if (hash === '#dashboard' || hash === '#dj') {
-        if (store.isAuthenticatedDJ()) setCurrentView('dj_dashboard');
-        else handleOpenAuth('login');
-      } else if (hash === '#profile') {
-        if (store.isAuthenticatedDJ()) setCurrentView('dj_profile');
-        else handleOpenAuth('login');
-      } else if (hash === '#live') {
-        setCurrentView('live_stage');
+        setCurrentView(hash === '#profile' ? 'dj_profile' : 'dj_dashboard');
+      } else if (hash.startsWith('#track/')) {
+        const token = hash.slice(7);
+        saveTrackingToken(token); setActiveTrackingToken(token); setCurrentView('customer_tracking');
+      } else if (hash === '#track') setCurrentView('customer_tracking');
+      else if (hash === '#live') setCurrentView('live_stage');
+      else {
+        if (hash.startsWith('#request/')) store.setCurrentEventBySlug(hash.slice(9).trim());
+        else if (hash.startsWith('#request?')) store.setCurrentEventBySlug(new URLSearchParams(hash.split('?')[1]).get('dj') || '');
+        else store.setCurrentEventBySlug('');
+        setCurrentView('public_request');
       }
     };
-
+    const onSession = () => {
+      const session = `${store.isAuthReady()}:${store.isAuthenticatedDJ()}`;
+      if (session === lastSession) return;
+      lastSession = session;
+      handleHash();
+    };
     if (isSignInWithEmailLink(auth, window.location.href)) setAuthModal({ isOpen: true, mode: 'login' });
-    handleHash();
+    onSession();
+    const unsubscribe = store.subscribe(onSession);
     window.addEventListener('hashchange', handleHash);
-    return () => window.removeEventListener('hashchange', handleHash);
+    return () => { unsubscribe(); window.removeEventListener('hashchange', handleHash); };
   }, []);
 
   useEffect(() => {
@@ -93,11 +107,15 @@ export default function App() {
   }, []);
 
   const handleTrackRequest = (token: string) => {
+    saveTrackingToken(token);
     setActiveTrackingToken(token);
+    window.location.hash = `track/${token}`;
     setCurrentView('customer_tracking');
   };
 
   const handleLaunchPaystack = (req: SongRequestItem, tipAmount: number) => {
+    saveTrackingToken(req.trackingToken);
+    setActiveTrackingToken(req.trackingToken);
     setCheckoutModal({
       isOpen: true,
       request: req,
@@ -113,12 +131,14 @@ export default function App() {
     setAuthModal({ isOpen: true, mode });
   };
 
-  const handleAuthSuccess = (dj: DJProfile) => {
-    setCurrentView('dj_profile');
+  const handleAuthSuccess = (_dj: DJProfile) => {
+    trackEvent('login');
+    handleNavigate(window.location.hash === '#dashboard' || window.location.hash === '#dj' ? 'dj_dashboard' : 'dj_profile');
   };
 
   const handleNavigate = (view: typeof currentView) => {
     if ((view === 'dj_dashboard' || view === 'dj_profile') && !store.isAuthenticatedDJ()) {
+      window.location.hash = view === 'dj_dashboard' ? 'dashboard' : 'profile';
       handleOpenAuth('login');
       return;
     }
@@ -127,8 +147,14 @@ export default function App() {
       const ownEvent = store.getEvents().find(event => event.djId === dj?.id);
       if (ownEvent && store.getCurrentEvent()?.djId !== dj?.id) store.setCurrentEvent(ownEvent.id);
     }
+    const hashes = { public_request: store.getCurrentEvent()?.slug ? `request/${store.getCurrentEvent().slug}` : 'request', customer_tracking: activeTrackingToken ? `track/${activeTrackingToken}` : 'track', dj_dashboard: 'dashboard', dj_profile: 'profile', live_stage: 'live' };
+    window.location.hash = hashes[view];
     setCurrentView(view);
   };
+
+  useEffect(() => {
+    if (backendReady && store.isAuthReady()) trackScreen(currentView);
+  }, [currentView, backendReady, currentDJ]);
 
   const unreadNotifications = notifications.filter((n) => !n.read).slice(0, 3);
 
@@ -194,7 +220,9 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 w-full relative z-10">
-        {currentView === 'public_request' && (
+        {currentView === 'public_request' && !store.getCurrentEvent() ? (
+          <div className="mx-auto max-w-lg p-10 text-center"><h1 className="text-2xl">{backendReady ? 'DJ session unavailable' : 'Loading session…'}</h1><p className="mt-3">{backendReady ? 'Check the link or ask the DJ for their current QR code.' : 'Connecting to the live session.'}</p></div>
+        ) : currentView === 'public_request' && (
           <PublicRequestPortal
             onTrackRequest={handleTrackRequest}
             onLaunchPaystack={handleLaunchPaystack}
@@ -205,21 +233,23 @@ export default function App() {
           <CustomerTrackingScreen
             initialToken={activeTrackingToken}
             onLaunchPaystack={handleLaunchPaystack}
-            onRequestNewSong={() => setCurrentView('public_request')}
+            onRequestNewSong={() => handleNavigate('public_request')}
+            onTrackToken={handleTrackRequest}
           />
         )}
 
         {currentView === 'dj_dashboard' && currentDJ && (
           <DJDashboard
             onOpenQr={() => setQrModalOpen(true)}
-            onNavigateToLiveStage={() => setCurrentView('live_stage')}
-            onNavigateToProfile={() => setCurrentView('dj_profile')}
+            onNavigateToLiveStage={() => handleNavigate('live_stage')}
+            onNavigateToProfile={() => handleNavigate('dj_profile')}
           />
         )}
 
         {currentView === 'dj_profile' && currentDJ && (
           <DJProfileView
             onNavigateToDashboard={() => handleNavigate('dj_dashboard')}
+            onOpenPersonalQr={() => setPersonalQrModalOpen(true)}
             onOpenAuthModal={handleOpenAuth}
           />
         )}
@@ -228,7 +258,7 @@ export default function App() {
       </main>
 
       {/* Global Modals */}
-      {qrModalOpen && (
+      {qrModalOpen && store.getCurrentEvent() && (
         <EventQrModal
           event={store.getCurrentEvent()}
           dj={currentDJ}
@@ -261,8 +291,7 @@ export default function App() {
           onSuccess={() => {
             setCheckoutModal({ isOpen: false, request: null, tipAmount: 0 });
             if (checkoutModal.request) {
-              setActiveTrackingToken(checkoutModal.request.trackingToken);
-              setCurrentView('customer_tracking');
+              handleTrackRequest(checkoutModal.request.trackingToken);
             }
           }}
         />

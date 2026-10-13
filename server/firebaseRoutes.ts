@@ -1,3 +1,5 @@
+import { activeQueue } from '../src/services/queue';
+import type { SongRequestItem } from '../src/types';
 import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
 import { DecodedIdToken } from 'firebase-admin/auth';
@@ -23,6 +25,9 @@ async function owned(req: Request, collection: string, id: string) {
   if ((collection === 'djs' ? data.id : data.djId) !== user.uid) throw new HttpError(403, 'You cannot modify this record.');
   return { ref, data, user };
 }
+export class PaystackError extends HttpError {
+  constructor(message: string, public definitive: boolean, public providerStatus?: number) { super(502, message); }
+}
 async function paystack(path: string, body?: unknown) {
   if (!process.env.PAYSTACK_SECRET_KEY) throw new HttpError(503, 'Payments are not configured.');
   const response = await fetch(`https://api.paystack.co${path}`, {
@@ -32,7 +37,8 @@ async function paystack(path: string, body?: unknown) {
     signal: AbortSignal.timeout(20000),
   });
   const result = await response.json();
-  if (!response.ok || !result.status) throw new HttpError(502, result.message || 'Paystack request failed.');
+  if (!response.ok || !result.status) throw new PaystackError(result.message || 'Paystack request failed.',
+    response.status >= 400 && response.status < 500 && ![408, 409, 429].includes(response.status) && !/reference|duplicate|already/i.test(result.message || ''), response.status);
   return result.data;
 }
 function initialEvent(dj: any, id: string) {
@@ -71,6 +77,17 @@ firebaseRoutes.post('/auth/profile', route(async (req, res) => {
 firebaseRoutes.put('/djs/:id', route(async (req, res) => {
   const { ref, user } = await owned(req, 'djs', String(req.params.id));
   const patch = profilePatch(req.body);
+  if (['bankCode', 'accountNumber', 'bankName'].some(key => patch[key] !== undefined)) {
+    if (patch.accountNumber || patch.bankCode || patch.bankName) {
+      if (!/^\d{10}$/.test(patch.accountNumber || '') || !/^\d{3,10}$/.test(patch.bankCode || '')) throw new HttpError(400, 'Select a bank and enter a 10-digit account number.');
+      const banks = await paystack('/bank?country=nigeria');
+      const bank = banks.find((b: any) => b.code === patch.bankCode);
+      if (!bank) throw new HttpError(400, 'Select a supported bank.');
+      const account = await paystack(`/bank/resolve?account_number=${patch.accountNumber}&bank_code=${patch.bankCode}`);
+      patch.bankName = bank.name;
+      patch.accountName = account.account_name;
+    } else patch.accountName = '';
+  }
   const db = firestore();
   const dj = await db.runTransaction(async tx => {
     const old = (await tx.get(ref)).data()!;
@@ -150,7 +167,10 @@ firebaseRoutes.post('/requests', route(async (req, res) => {
 firebaseRoutes.get('/requests/track/:token', route(async (req, res) => {
   const docs = await firestore().collection('song_requests').where('trackingToken', '==', documentId(req.params.token)).limit(1).get();
   if (docs.empty) throw new HttpError(404, 'Request not found.');
-  res.json({ success: true, request: docs.docs[0].data() });
+  const request = docs.docs[0].data();
+  const queue = await firestore().collection('song_requests').where('eventId', '==', request.eventId).get();
+  const rank = activeQueue(queue.docs.map(d => d.data() as SongRequestItem)).findIndex(r => r.id === request.id) + 1;
+  res.json({ success: true, request: { ...request, queueRank: rank || null } });
 }));
 
 firebaseRoutes.patch('/requests/:id/status', route(async (req, res) => {
@@ -164,7 +184,8 @@ firebaseRoutes.patch('/requests/:id/status', route(async (req, res) => {
     const event = (await tx.get(eventRef)).data();
     const previousRef = event?.playingRequestId && event.playingRequestId !== ref.id ? db.collection('song_requests').doc(event.playingRequestId) : null;
     const previous = previousRef ? (await tx.get(previousRef)).data() : null;
-    const patch: Record<string, any> = { status, updatedAt: now() };
+    const rejectionReason = status === 'rejected' ? text(req.body.reason || '', 'rejection reason', 500, false) : '';
+    const patch: Record<string, any> = { status, rejectionReason, updatedAt: now() };
     if (status === 'playing') {
       patch.playingStartedAt = now();
       if (previous?.status === 'playing' && previousRef) {
@@ -179,7 +200,7 @@ firebaseRoutes.patch('/requests/:id/status', route(async (req, res) => {
     }
     tx.update(ref, patch);
     const history = db.collection('queue_history').doc();
-    tx.create(history, { id: history.id, requestId: ref.id, djId: user.uid, song: request.song, artist: request.artist, action: status, performer: user.uid, oldStatus: request.status, newStatus: status, createdAt: now() });
+    tx.create(history, { id: history.id, requestId: ref.id, djId: user.uid, song: request.song, artist: request.artist, action: status, note: rejectionReason, performer: user.uid, oldStatus: request.status, newStatus: status, createdAt: now() });
   });
   res.json({ success: true });
 }));
@@ -231,9 +252,10 @@ export async function settlePayment(verified: any, requestedId?: string, db = fi
     const request = (await tx.get(requestRef)).data();
     const djRef = db.collection('djs').doc(payment.djId);
     const dj = (await tx.get(djRef)).data();
+    const event = request?.eventId ? (await tx.get(db.collection('events').doc(request.eventId))).data() : undefined;
     if (!request || !dj || request.djId !== payment.djId) throw new HttpError(400, 'Checkout owner mismatch.');
     tx.update(ref, { status: 'success', paidAt: now() });
-    tx.update(requestRef, { tipAmount: FieldValue.increment(payment.amount), priority: true, updatedAt: now() });
+    tx.update(requestRef, { tipAmount: FieldValue.increment(payment.amount), priority: request.priority === true || event?.autoPriority === true, updatedAt: now() });
     tx.update(djRef, { availableBalance: FieldValue.increment(payment.amount), totalTipsEarned: FieldValue.increment(payment.amount) });
     const notification = db.collection('notifications').doc(`payment-${ref.id}`);
     tx.set(notification, { id: notification.id, djId: payment.djId, type: 'tip_confirmed', title: 'Tip confirmed', message: `₦${payment.amount} received for ${request.song}`, song: request.song, artist: request.artist, tipAmount: payment.amount, timestamp: now(), read: false });
@@ -264,6 +286,58 @@ export async function settleTransfer(reference: string, status: string, db = fir
     else tx.update(djRef, { ...cleared, availableBalance: FieldValue.increment(payout.amount), ...(payout.status === 'success' ? { totalWithdrawn: FieldValue.increment(-payout.amount) } : {}) });
   });
 }
+
+// Only provider-verified outcomes settle reserved funds; a timeout/404 never refunds them.
+export async function recordTransfer(reference: string, transfer: any, db = firestore()) {
+  const ref = db.collection('payouts').doc(documentId(reference));
+  const payout = (await ref.get()).data();
+  if (!payout || transfer.reference !== reference || transfer.currency !== 'NGN' || transfer.amount !== Math.round(payout.netAmount * 100)) throw new HttpError(502, 'Transfer details do not match this payout.');
+  await ref.update({ providerStatus: transfer.status, ...(transfer.transfer_code ? { paystackTransferCode: transfer.transfer_code } : {}), lastCheckedAt: now() });
+  await settleTransfer(reference, transfer.status, db);
+}
+export async function reconcilePayout(reference: string, db = firestore()) {
+  const transfer = await paystack(`/transfer/verify/${encodeURIComponent(documentId(reference))}`);
+  await recordTransfer(reference, transfer, db);
+}
+export async function reconcilePendingPayouts() {
+  const db = firestore();
+  const pending = await db.collection('payouts').where('status', '==', 'processing').get();
+  // Bound concurrency so one slow provider response does not block every other payout.
+  for (let offset = 0; offset < pending.docs.length; offset += 10) {
+    await Promise.all(pending.docs.slice(offset, offset + 10).map(async payout => {
+      try { await reconcilePayout(payout.id, db); }
+      catch (error) { console.error('Payout reconciliation pending:', payout.id, error instanceof Error ? error.message : 'Provider unavailable'); }
+    }));
+  }
+}
+// Operator-only CLI uses this for OTP sent to the Paystack business owner.
+export async function finalizePayout(reference: string, otp: string) {
+  await reconcilePayout(reference);
+  const payout = (await firestore().collection('payouts').doc(documentId(reference)).get()).data();
+  if (payout?.status !== 'processing' || payout.providerStatus !== 'otp' || !payout.paystackTransferCode) throw new HttpError(400, 'This payout is not awaiting OTP approval.');
+  const transfer = await paystack('/transfer/finalize_transfer', { transfer_code: payout.paystackTransferCode, otp: text(otp, 'OTP', 20) });
+  await recordTransfer(reference, transfer);
+}
+firebaseRoutes.post('/payout/:reference/retry', route(async (req, res) => {
+  const { ref, data } = await owned(req, 'payouts', String(req.params.reference));
+  if (data.status !== 'processing') return res.json({ success: true, payout: data });
+  // Always reconcile first. Reuse the reference only after a provider 404, never on a timeout.
+  try { await reconcilePayout(ref.id); }
+  catch (error) {
+    if (!(error instanceof PaystackError) || error.providerStatus !== 404) throw error;
+    if (Date.now() - Date.parse(data.createdAt) < 120_000) throw new HttpError(409, 'Allow two minutes for the original transfer to reach the provider, then check again.');
+    if (!data.paystackRecipientCode) throw new HttpError(409, 'Contact payout support to reconcile this transfer before retrying.');
+    const transfer = await paystack('/transfer', { source: 'balance', amount: Math.round(data.netAmount * 100), recipient: data.paystackRecipientCode, reference: ref.id, currency: 'NGN', reason: 'VybeCheck DJ withdrawal' });
+    await recordTransfer(ref.id, transfer);
+  }
+  res.json({ success: true, payout: (await ref.get()).data() });
+}));
+
+firebaseRoutes.post('/payout/:reference/reconcile', route(async (req, res) => {
+  const { ref, data } = await owned(req, 'payouts', String(req.params.reference));
+  if (data.status === 'processing' || data.status === 'pending') await reconcilePayout(ref.id);
+  res.json({ success: true, payout: (await ref.get()).data() });
+}));
 
 firebaseRoutes.post('/payments/webhook', route(async (req, res) => {
   const secret = process.env.PAYSTACK_SECRET_KEY;
@@ -328,15 +402,15 @@ firebaseRoutes.post('/payout/withdraw', route(async (req, res) => {
       await ref.update({ accountName: account.account_name, paystackRecipientCode: recipient.recipient_code });
       transferAttempted = true;
       const transfer = await paystack('/transfer', { source: 'balance', amount: amountKobo - 2500, recipient: recipient.recipient_code, reference, reason: 'VybeCheck DJ withdrawal' });
-      await ref.update({ paystackTransferCode: transfer.transfer_code });
-      await settleTransfer(reference, transfer.status);
+      await recordTransfer(reference, transfer, db);
     } catch (error) {
       // An uncertain transfer must stay reserved until a verified webhook/reconciliation.
-      if (!transferAttempted) await settleTransfer(reference, 'failed');
+      if (!transferAttempted || (error instanceof PaystackError && error.definitive)) await settleTransfer(reference, 'failed');
       else await ref.update({ failureReason: 'Transfer awaiting provider confirmation. Do not retry with a new reference.' });
-      if (!transferAttempted) throw error;
+      // Return the persisted payout, including definitive failure, to clear client retry state.
     }
   }
+  if (result.existing && result.payout.status === 'processing') await reconcilePayout(reference, db);
   const payout = (await ref.get()).data();
   const wallet = (await djRef.get()).data();
   res.json({ success: true, payout, wallet: { availableBalance: wallet?.availableBalance, totalWithdrawn: wallet?.totalWithdrawn } });

@@ -1,7 +1,10 @@
+import { trackEvent, trackPayment } from './analytics';
+import { saveTrackingToken } from './tracking';
 import { onAuthStateChanged, createUserWithEmailAndPassword, GoogleAuthProvider, GithubAuthProvider, OAuthProvider, signInWithPopup, signInWithEmailAndPassword, signOut, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, User } from 'firebase/auth';
 import { collection, doc, getDocs, onSnapshot, query, where, Unsubscribe } from 'firebase/firestore';
 import { auth, db, api, saveProfileImage } from './firebase';
 import { EventItem, SongRequestItem, DJNotification, Genre, DJProfile, PayoutItem, BankItem, DJWalletInfo, EmailLogItem } from '../types';
+import { activeQueue } from './queue';
 import { soundEngine } from './soundEffects';
 
 type Registration = Omit<DJProfile, 'id' | 'createdAt' | 'totalTipsEarned' | 'totalRequestsReceived' | 'totalSongsPlayed' | 'isVerified' | 'availableBalance' | 'totalWithdrawn'>;
@@ -21,6 +24,7 @@ class Store {
   private initialized = false;
   private initializationError: string | null = null;
   private authOperation = false;
+  private authReady = false;
   private authVersion = 0;
   private privateListeners: Unsubscribe[] = [];
   private requestListener: Unsubscribe | undefined;
@@ -40,10 +44,12 @@ class Store {
       this.resolveEvent();
       this.notify();
     }, error => this.reportError(error));
-    onAuthStateChanged(auth, user => {
+    onAuthStateChanged(auth, async user => {
       if (this.authOperation) return;
       this.clearPrivateState();
-      if (user) void this.finishSignIn(user).catch(error => this.reportError(error));
+      try { if (user) await this.finishSignIn(user); }
+      catch (error) { this.reportError(error); }
+      finally { this.authReady = true; this.notify(); }
     });
   }
 
@@ -56,6 +62,7 @@ class Store {
   public isReady() { return this.initialized; }
   public getInitializationError() { return this.initializationError; }
   public isAuthenticatedDJ() { return !!auth.currentUser && this.ownDJ?.id === auth.currentUser.uid; }
+  public isAuthReady() { return this.authReady; }
   public isAuth() { return this.isAuthenticatedDJ(); }
   public getCurrentDJ(): DJProfile { return (this.ownDJ || this.djs.find(d => d.id === this.getCurrentEvent()?.djId)) as DJProfile; }
   public getDJs() { return this.djs; }
@@ -120,6 +127,7 @@ class Store {
     const publicDJ = this.djs.find(d => d.handle === this.requestedSlug);
     const linked = this.events.find(e => e.slug === this.requestedSlug) || (publicDJ && this.events.find(e => e.djId === publicDJ.id));
     if (linked) this.currentEventId = linked.id;
+    else if (this.requestedSlug) this.currentEventId = '';
     else if (!this.events.some(e => e.id === this.currentEventId)) this.currentEventId = this.events.find(e => e.djId === this.ownDJ?.id)?.id || this.events[0]?.id || '';
     this.watchRequests();
   }
@@ -135,7 +143,7 @@ class Store {
     this.requests = [];
     if (!canRead) return;
     let firstSnapshot = true;
-    this.requestListener = onSnapshot(query(collection(db, 'song_requests'), where('eventId', '==', event.id)), snapshot => {
+    this.requestListener = onSnapshot(query(collection(db, 'song_requests'), where('eventId', '==', event.id), ...(event.djId === auth.currentUser?.uid ? [where('djId', '==', auth.currentUser.uid)] : [])), snapshot => {
       if (this.requestSubscription !== key) return;
       if (!firstSnapshot && this.isAuthenticatedDJ()) {
         const added = snapshot.docChanges().filter(change => change.type === 'added');
@@ -254,32 +262,41 @@ class Store {
     this.notify();
     return result.request as SongRequestItem;
   }
-  public getActiveQueue(eventId?: string) { return this.getRequests(eventId).filter(r => ['pending', 'up_next'].includes(r.status)).sort((a, b) => Number(b.priority) - Number(a.priority) || a.queuePosition - b.queuePosition); }
+  public getActiveQueue(eventId?: string) { return activeQueue(this.getRequests(eventId)); }
   public getCurrentlyPlaying(eventId?: string) { return this.getRequests(eventId).find(r => r.status === 'playing'); }
   public getPlayedHistory(eventId?: string) { return this.getRequests(eventId).filter(r => r.status === 'played').sort((a, b) => (b.playedAt || b.updatedAt).localeCompare(a.playedAt || a.updatedAt)); }
   public async createRequest(data: RequestInput) {
     try {
       const result = await api('/api/requests', { ...data, eventId: data.eventId || this.currentEventId });
+      saveTrackingToken(result.request.trackingToken);
+      trackEvent('song_request');
       this.requests = [...this.requests.filter(r => r.id !== result.request.id), result.request];
       this.notify();
       return { success: true, request: result.request as SongRequestItem };
     } catch (error) { return { success: false, error: errorMessage(error) }; }
   }
   public async addRequest(data: RequestInput) { const result = await this.createRequest(data); if (!result.request) throw new Error(result.error); return result.request; }
-  public async updateRequestStatus(id: string, status: SongRequestItem['status']) {
-    try { await api(`/api/requests/${encodeURIComponent(id)}/status`, { status }, 'PATCH'); }
+  public async updateRequestStatus(id: string, status: SongRequestItem['status'], reason?: string) {
+    try { await api(`/api/requests/${encodeURIComponent(id)}/status`, { status, ...(reason !== undefined ? { reason } : {}) }, 'PATCH'); }
     catch (error) { this.reportError(error); }
   }
   public addToQueue(id: string) { return this.updateRequestStatus(id, 'up_next'); }
   public playRequest(id: string) { return this.updateRequestStatus(id, 'playing'); }
   public markPlayed(id: string) { return this.updateRequestStatus(id, 'played'); }
-  public rejectRequest(id: string, _reason?: string) { return this.updateRequestStatus(id, 'rejected'); }
+  public rejectRequest(id: string, reason?: string) { return this.updateRequestStatus(id, 'rejected', reason); }
   public restoreRequest(id: string) { return this.updateRequestStatus(id, 'pending'); }
+  public canMoveQueueItem(id: string, direction: 'up' | 'down') {
+    const queue = this.getActiveQueue().filter(r => r.status === 'up_next');
+    const index = queue.findIndex(r => r.id === id);
+    const adjacent = queue[index + (direction === 'up' ? -1 : 1)];
+    return index >= 0 && !!adjacent && adjacent.priority === queue[index].priority;
+  }
   public moveQueueItem(id: string, direction: 'up' | 'down') {
-    const queue = this.getActiveQueue();
+    const queue = this.getActiveQueue().filter(r => r.status === 'up_next');
     const index = queue.findIndex(r => r.id === id);
     const target = index + (direction === 'up' ? -1 : 1);
     if (index < 0 || target < 0 || target >= queue.length) return;
+    if (queue[index].priority !== queue[target].priority) { this.reportError(new Error('VIP requests stay ahead of standard requests. Move songs within their priority group.')); return; }
     [queue[index], queue[target]] = [queue[target], queue[index]];
     void this.reorderQueue(queue.map(r => r.id));
   }
@@ -294,6 +311,7 @@ class Store {
       const result = await api('/api/payments/verify', { reference, requestId: request.id });
       await this.trackRequest(request.trackingToken);
       soundEngine.play('tipReceived');
+      trackPayment(reference, result.amount);
       return { amount: result.amount, reference, priority: this.getRequestByToken(request.id)?.priority === true };
     } catch { return false; }
   }
@@ -325,6 +343,10 @@ class Store {
       this.pendingWithdrawal = undefined;
       return result;
     } catch (error) { return { success: false, error: errorMessage(error) }; }
+  }
+  public async retryPayout(reference: string) { return api(`/api/payout/${encodeURIComponent(reference)}/retry`, {}); }
+  public async reconcilePayout(reference: string) {
+    return api(`/api/payout/${encodeURIComponent(reference)}/reconcile`, {});
   }
   public getPayouts() { return this.payouts; }
   public async getPayoutHistory() { return this.payouts; }

@@ -1,3 +1,4 @@
+import { compareQueue } from '../services/queue';
 import React, { useState, useEffect } from 'react';
 import { 
   Play, 
@@ -115,7 +116,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
   const handleMoveDown = (id: string) => store.moveQueueItem(id, 'down');
 
   const handlePlayNext = () => {
-    const nextReq = upNextRequests[0] || newRequests[0];
+    const nextReq = store.getActiveQueue()[0];
     if (nextReq) {
       store.playRequest(nextReq.id);
     }
@@ -139,10 +140,10 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
     return matchesSearch && matchesGenre && matchesVip;
   });
 
-  const newRequests = filteredRequests.filter((r) => r.status === 'pending');
+  const newRequests = filteredRequests.filter((r) => r.status === 'pending').sort(compareQueue);
   const upNextRequests = filteredRequests
     .filter((r) => r.status === 'up_next')
-    .sort((a, b) => a.queuePosition - b.queuePosition);
+    .sort(compareQueue);
   const nowPlaying = requests.find((r) => r.status === 'playing');
 
   // Metrics
@@ -291,6 +292,8 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
             <span>Auto VIP {currentEvent?.autoPriority ? 'ON' : 'OFF'}</span>
           </button>
 
+          <button className="btn text-xs" onClick={handleTogglePublicQueue} aria-pressed={!!currentEvent?.publicQueueEnabled}>Public queue {currentEvent?.publicQueueEnabled ? 'ON' : 'OFF'}</button>
+          <button className="btn text-xs" onClick={handleToggleTips} aria-pressed={!!currentEvent?.tipsEnabled}>Tips {currentEvent?.tipsEnabled ? 'ON' : 'OFF'}</button>
           <button
             onClick={onNavigateToLiveStage}
             className="px-3 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider bg-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.08)] text-[#F5F2ED] transition-colors flex items-center gap-1.5"
@@ -491,7 +494,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
                   </p>
                   <button
                     onClick={handlePlayNext}
-                    disabled={upNextRequests.length === 0 && newRequests.length === 0}
+                    disabled={store.getActiveQueue().length === 0}
                     className="btn btn-primary text-xs"
                   >
                     <span>Play Next in Queue</span>
@@ -565,7 +568,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
                     </button>
                     <button
                       onClick={() => handleMoveUp(req.id)}
-                      disabled={idx === 0}
+                      disabled={!store.canMoveQueueItem(req.id, 'up')}
                       className="p-1.5 rounded-lg bg-[rgba(255,255,255,0.04)] text-[#8F8C88] hover:text-[#F5F2ED] disabled:opacity-20 transition-colors"
                       title="Move Up"
                     >
@@ -573,7 +576,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
                     </button>
                     <button
                       onClick={() => handleMoveDown(req.id)}
-                      disabled={idx === upNextRequests.length - 1}
+                      disabled={!store.canMoveQueueItem(req.id, 'down')}
                       className="p-1.5 rounded-lg bg-[rgba(255,255,255,0.04)] text-[#8F8C88] hover:text-[#F5F2ED] disabled:opacity-20 transition-colors"
                       title="Move Down"
                     >

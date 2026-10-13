@@ -60,6 +60,7 @@ export interface PayoutItem {
   paystackTransferCode?: string;
   status: 'pending' | 'processing' | 'success' | 'failed';
   failureReason?: string;
+  providerStatus?: string;
   createdAt: string;
   processedAt?: string;
 }
@@ -103,7 +104,9 @@ export interface SongRequestItem {
   priority: boolean;
   status: RequestStatus;
   queuePosition: number;
+  queueRank?: number;
   trackingToken: string;
+  rejectionReason?: string;
   ipAddress?: string;
   artworkUrl?: string;
   previewUrl?: string;

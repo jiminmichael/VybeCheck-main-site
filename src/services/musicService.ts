@@ -1,5 +1,4 @@
 import { RealTrackSuggestion, Genre } from '../types';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export interface AudioRecognitionResult {
   song: string;
@@ -10,6 +9,7 @@ export interface AudioRecognitionResult {
   previewUrl?: string;
   releaseYear?: number;
   confidence: number;
+  isExample?: boolean;
   lyricsOrHook?: string;
   matchNotes?: string;
 }
@@ -74,15 +74,15 @@ class MusicService {
   }
 
   /**
-   * Fetch trending real party & club tracks
+   * Fetch suggested party and club tracks
    */
-  public async getTrendingTracks(): Promise<RealTrackSuggestion[]> {
+  public async getSuggestedTracks(): Promise<RealTrackSuggestion[]> {
     try {
-      const res = await fetch('/api/music/trending');
+      const res = await fetch('/api/music/suggestions');
       if (res.ok) {
         const data = await res.json();
-        if (data.trending && data.trending.length > 0) {
-          return data.trending;
+        if (data.suggestions && data.suggestions.length > 0) {
+          return data.suggestions;
         }
       }
     } catch (err) {}

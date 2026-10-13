@@ -162,7 +162,7 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
     processAudioForIdentification(file);
   };
 
-  const handleSimulateSample = async (sampleTitle: string, sampleArtist: string, sampleGenre: any) => {
+  const handleSongExample = async (sampleTitle: string, sampleArtist: string, sampleGenre: any) => {
     setErrorMsg(null);
     setDetectedSong(null);
     setIsAnalyzing(true);
@@ -179,9 +179,10 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
         artworkUrl: top?.artworkUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
         previewUrl: top?.previewUrl || '',
         releaseYear: top?.releaseYear ? Number(top.releaseYear) : 2024,
-        confidence: 96,
-        lyricsOrHook: 'Recognized rhythmic signature and live bassline',
-        matchNotes: 'Acoustic pattern matched with Afrobeats catalog',
+        confidence: 0,
+        isExample: true,
+        lyricsOrHook: 'Song example selected from the catalog.',
+        matchNotes: 'This is a song example, not an audio recognition result.',
       });
     } catch {
       setErrorMsg('Failed to analyze sample.');
@@ -265,26 +266,26 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
             {/* Quick Anthem Samples */}
             <div className="w-full pt-4 border-t border-[rgba(255,255,255,0.08)] text-center space-y-2">
               <span className="text-[10px] uppercase tracking-wider text-[#8F8C88] block">
-                Quick Audio Samples:
+                Song examples (no audio analysis):
               </span>
               <div className="flex flex-wrap items-center justify-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => handleSimulateSample('City Boys', 'Burna Boy', 'Afrobeats')}
+                  onClick={() => handleSongExample('City Boys', 'Burna Boy', 'Afrobeats')}
                   className="py-1 px-2.5 rounded-lg bg-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.08)] border border-[rgba(255,255,255,0.06)] text-xs text-[#8F8C88] hover:text-[#F5F2ED]"
                 >
                   City Boys
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleSimulateSample('Water', 'Tyla', 'Amapiano')}
+                  onClick={() => handleSongExample('Water', 'Tyla', 'Amapiano')}
                   className="py-1 px-2.5 rounded-lg bg-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.08)] border border-[rgba(255,255,255,0.06)] text-xs text-[#8F8C88] hover:text-[#F5F2ED]"
                 >
                   Water
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleSimulateSample('Mnike', 'Tyler ICU', 'Amapiano')}
+                  onClick={() => handleSongExample('Mnike', 'Tyler ICU', 'Amapiano')}
                   className="py-1 px-2.5 rounded-lg bg-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.08)] border border-[rgba(255,255,255,0.06)] text-xs text-[#8F8C88] hover:text-[#F5F2ED]"
                 >
                   Mnike
@@ -314,7 +315,7 @@ export const AudioRecognizerModal: React.FC<AudioRecognizerModalProps> = ({
 
               <div className="flex-1 min-w-0">
                 <span className="text-[10px] uppercase tracking-wider text-[#2E8B7A] font-semibold block">
-                  {detectedSong.confidence}% MATCH
+                  {detectedSong.isExample ? 'CATALOG EXAMPLE' : `${detectedSong.confidence}% MATCH`}
                 </span>
                 <h3 className="font-['Syne'] text-base font-bold text-[#F5F2ED] truncate">
                   {detectedSong.song}

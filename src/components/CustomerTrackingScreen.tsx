@@ -18,12 +18,14 @@ interface CustomerTrackingScreenProps {
   initialToken?: string;
   onLaunchPaystack: (req: SongRequestItem, tipAmount: number) => void;
   onRequestNewSong: () => void;
+  onTrackToken: (token: string) => void;
 }
 
 export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
   initialToken,
   onLaunchPaystack,
   onRequestNewSong,
+  onTrackToken,
 }) => {
   const [tokenInput, setTokenInput] = useState(initialToken || '');
   const [activeToken, setActiveToken] = useState(initialToken || '');
@@ -42,14 +44,7 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
       if (activeToken) {
         const found = store.getRequestByToken(activeToken);
         setRequest(found);
-      } else {
-        const all = store.getRequests();
-        if (all.length > 0) {
-          setRequest(all[0]);
-          setActiveToken(all[0].trackingToken);
-          setTokenInput(all[0].trackingToken);
-        }
-      }
+      } else setRequest(undefined);
     };
 
     update();
@@ -70,6 +65,7 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
     e.preventDefault();
     if (tokenInput.trim()) {
       setActiveToken(tokenInput.trim());
+      onTrackToken(tokenInput.trim());
     }
   };
 
@@ -127,7 +123,7 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
         return {
           label: 'DECLINED',
           title: 'Unable to Play',
-          subtitle: 'The track did not match current BPM or energy. Try another sound!',
+          subtitle: request?.rejectionReason || 'The DJ could not play this request. Try another song.',
           color: 'text-[#8B3A3A]',
           badge: 'bg-[rgba(139,58,58,0.15)] text-[#8B3A3A] border border-[#8B3A3A]/30',
           icon: <XCircle className="w-6 h-6 text-[#8B3A3A]" />,
@@ -206,7 +202,7 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
                   </span>
                 ) : (
                   <span className="text-xs font-mono text-[#8F8C88]">
-                    #{request.queuePosition < 10 ? `0${request.queuePosition}` : request.queuePosition}
+                    {request.queueRank ? `#${request.queueRank}` : request.status.replace('_', ' ')}
                   </span>
                 )}
               </div>
@@ -245,13 +241,13 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
               </div>
 
               {/* VIP Boost Option if Pending */}
-              {request.status === 'pending' && !request.priority && (
+              {request.status === 'pending' && !request.priority && store.getEvents().find(e => e.id === request.eventId)?.tipsEnabled && (
                 <div className="pt-4 border-t border-[rgba(255,255,255,0.08)]">
                   <button
-                    onClick={() => onLaunchPaystack(request, 50000)}
+                    onClick={() => { const event = store.getEvents().find(e => e.id === request.eventId); if (event) onLaunchPaystack(request, Math.min(event.maxTip, Math.max(event.minTip, 50000))); }}
                     className="btn btn-gold btn-full"
                   >
-                    Boost with VIP Priority
+                    {store.getEvents().find(e => e.id === request.eventId)?.autoPriority ? 'Boost with VIP Priority' : 'Tip the DJ'}
                   </button>
                 </div>
               )}

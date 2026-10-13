@@ -1,3 +1,4 @@
+import { compareQueue } from '../services/queue';
 import React, { useState, useEffect } from 'react';
 import { QrCode, X, Crown, Radio } from 'lucide-react';
 import QRCode from 'qrcode';
@@ -55,7 +56,7 @@ export const LiveStageScreen: React.FC = () => {
   const nowPlaying = requests.find((r) => r.status === 'playing');
   const upNext = requests
     .filter((r) => r.status === 'up_next')
-    .sort((a, b) => a.queuePosition - b.queuePosition)
+    .sort(compareQueue)
     .slice(0, 4);
 
   const col1Tracks = upNext.slice(0, 2);

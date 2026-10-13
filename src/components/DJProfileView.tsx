@@ -36,6 +36,7 @@ import { WithdrawalModal } from './WithdrawalModal';
 
 interface DJProfileViewProps {
   onNavigateToDashboard: () => void;
+  onOpenPersonalQr: () => void;
   onOpenAuthModal: (mode: 'login' | 'signup') => void;
 }
 
@@ -60,6 +61,7 @@ const QR_THEMES = [
 
 export const DJProfileView: React.FC<DJProfileViewProps> = ({
   onNavigateToDashboard,
+  onOpenPersonalQr,
   onOpenAuthModal,
 }) => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(store.isAuthenticatedDJ());
@@ -74,6 +76,8 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
   const [selectedTheme, setSelectedTheme] = useState(QR_THEMES[0]);
   const [fullProjectorMode, setFullProjectorMode] = useState(false);
   const [isWithdrawalOpen, setIsWithdrawalOpen] = useState(false);
+  const [payoutError, setPayoutError] = useState('');
+  const [checkingPayout, setCheckingPayout] = useState<string | null>(null);
   const [payouts, setPayouts] = useState<PayoutItem[]>([]);
   const [banks, setBanks] = useState<BankItem[]>([]);
 
@@ -442,6 +446,7 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
             </div>
 
             {/* QR Actions */}
+            <button onClick={onOpenPersonalQr} className="btn text-xs">Open QR Studio</button>
             <div className="grid grid-cols-2 gap-2">
               <button onClick={handleDownloadQr} className="btn btn-gold text-xs">
                 <Download className="w-3.5 h-3.5" />
@@ -678,6 +683,7 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
               </span>
             </div>
 
+            {payoutError && <p role="alert" className="text-sm text-rose-300">{payoutError}</p>}
             {payouts.length === 0 ? (
               <div className="text-center py-6 text-xs text-[#8F8C88]">
                 No withdrawals yet. All incoming tips will accrue in your Available Wallet.
@@ -700,6 +706,22 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
                       </div>
                       <span className="text-[11px] text-[#8F8C88] block mt-0.5">
                         {p.bankName} ({p.accountNumber}) • Ref: {p.reference}
+                      </span>
+                      {p.providerStatus === 'otp' && <p>Awaiting approval from the platform's payout administrator.</p>}
+                      {p.failureReason && p.status === 'failed' && <p>{p.failureReason}</p>}
+                      {(p.status === 'processing' || p.status === 'pending') && <button className="btn mt-2" disabled={checkingPayout !== null} onClick={async () => {
+                        setCheckingPayout(p.reference); setPayoutError('');
+                        try { const result = await store.reconcilePayout(p.reference); setPayouts(items => items.map(item => item.id === p.id ? result.payout : item)); }
+                        catch (error) { setPayoutError(error instanceof Error ? error.message : 'Unable to check payout.'); }
+                        finally { setCheckingPayout(null); }
+                      }}>{checkingPayout === p.reference ? 'Checking…' : 'Check transfer status'}</button>}
+                      {p.status === 'processing' && <button className="btn mt-2" disabled={checkingPayout !== null} onClick={async () => {
+                        setCheckingPayout(p.reference); setPayoutError('');
+                        try { const result = await store.retryPayout(p.reference); setPayouts(items => items.map(item => item.id === p.id ? result.payout : item)); }
+                        catch (error) { setPayoutError(error instanceof Error ? error.message : 'Unable to recover payout.'); }
+                        finally { setCheckingPayout(null); }
+                      }}>Recover missing transfer</button>}
+                      <span>
                       </span>
                     </div>
                     <span className="text-[10px] text-[#8F8C88]">

@@ -29,7 +29,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 }) => {
   const [currentDJ, setCurrentDJ] = useState<DJProfile>(store.getCurrentDJ());
   const [banks, setBanks] = useState<BankItem[]>([]);
-  const [selectedBankCode, setSelectedBankCode] = useState<string>('058');
+  const [selectedBankCode, setSelectedBankCode] = useState<string>('');
   const [accountNumber, setAccountNumber] = useState<string>('');
   const [accountName, setAccountName] = useState<string>('');
   const [isResolvingAccount, setIsResolvingAccount] = useState<boolean>(false);
@@ -45,12 +45,10 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     const dj = store.getCurrentDJ();
     setCurrentDJ(dj);
     if (dj) {
-      setAccountNumber(dj.accountNumber || '0124892019');
-      setAccountName(dj.accountName || dj.name);
-      setSelectedBankCode(dj.bankCode || '058');
-      if (dj.accountNumber && dj.accountNumber.length === 10) {
-        setAccountResolved(true);
-      }
+      setAccountNumber(dj.accountNumber || '');
+      setAccountName(dj.accountName || '');
+      setSelectedBankCode(dj.bankCode || '');
+      setAccountResolved(false);
     }
 
     store.getNigerianBanks().then((bankList) => {
@@ -61,13 +59,21 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
     });
   }, [isOpen]);
 
+  useEffect(() => store.subscribe(() => {
+    setCurrentDJ(store.getCurrentDJ());
+    setCompletedPayout(old => old ? store.getPayouts().find(p => p.id === old.id) || old : null);
+  }), []);
+
   // Handle Account Auto-Resolution when 10 digits entered
   useEffect(() => {
+    let cancelled = false;
+    setAccountResolved(false);
     const clean = accountNumber.trim().replace(/\D/g, '');
     if (clean.length === 10 && selectedBankCode) {
       setIsResolvingAccount(true);
       setResolveError(null);
       store.resolveBankAccount(clean, selectedBankCode).then((res) => {
+        if (cancelled) return;
         setIsResolvingAccount(false);
         if (res.success && res.accountName) {
           setAccountName(res.accountName);
@@ -79,7 +85,9 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       });
     } else {
       setAccountResolved(false);
+      setIsResolvingAccount(false);
     }
+    return () => { cancelled = true; };
   }, [accountNumber, selectedBankCode]);
 
   if (!isOpen) return null;
@@ -110,6 +118,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
       return;
     }
 
+    if (!accountResolved || isResolvingAccount || !selectedBankObj) { setError('Select a bank and wait for account verification.'); return; }
     setIsSubmitting(true);
     try {
       const res = await store.requestInstantWithdrawal(amount, {
@@ -179,7 +188,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
                 ₦{completedPayout.netAmount.toLocaleString()}
               </h3>
               <p className="text-xs text-[#8F8C88]">
-                {completedPayout.status === 'success' ? 'Sent to' : completedPayout.status === 'failed' ? 'Not sent to' : 'Awaiting confirmation for'} {completedPayout.bankName} ({completedPayout.accountNumber})
+                {completedPayout.providerStatus === 'otp' ? 'Awaiting platform payout approval for' : completedPayout.status === 'success' ? 'Sent to' : completedPayout.status === 'failed' ? 'Not sent to' : 'Awaiting confirmation for'} {completedPayout.bankName} ({completedPayout.accountNumber})
               </p>
             </div>
 

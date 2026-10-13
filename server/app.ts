@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import express from 'express';
 import type { Request, Response } from 'express';
-import { GoogleGenAI } from '@google/genai';
+import { decodeAudioDataUrl } from './audio';
+import { HttpError } from './domain';
 import 'dotenv/config';
 import { firebaseRoutes } from './firebaseRoutes';
 
@@ -9,23 +10,6 @@ const app = express();
 app.use(express.json({ limit: '25mb', verify: (req, _res, buffer) => { (req as any).rawBody = buffer; } }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 app.use('/api', firebaseRoutes);
-// Lazy/safe initialization for Google GenAI (Kept for your text/logic features)
-let aiClient: GoogleGenAI | null = null;
-
-function getGenAI(): GoogleGenAI | null {
-  if (!aiClient && process.env.GEMINI_API_KEY) {
-    aiClient = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
-  }
-  return aiClient;
-}
-
 // Genre mapper for music classification
 function mapGenre(rawGenre: string = '', song: string = '', artist: string = ''): string {
   const combined = `${rawGenre} ${song} ${artist}`.toLowerCase();
@@ -103,8 +87,8 @@ app.get('/api/music/search', async (req: Request, res: Response) => {
   }
 });
 
-// Trending Tracks
-app.get('/api/music/trending', async (req: Request, res: Response) => {
+// Suggested tracks from catalog searches; not a popularity chart.
+app.get('/api/music/suggestions', async (req: Request, res: Response) => {
   try {
     const defaultQueries = ['Burna Boy', 'Tyla Amapiano', 'Asake', 'Shallipopi', 'Davido', 'Tyler ICU'];
     const randomTerm = defaultQueries[Math.floor(Math.random() * defaultQueries.length)];
@@ -123,11 +107,11 @@ app.get('/api/music/trending', async (req: Request, res: Response) => {
         previewUrl: item.previewUrl,
         releaseYear: item.releaseDate ? new Date(item.releaseDate).getFullYear() : undefined,
       }));
-      return res.json({ trending: tracks });
+      return res.json({ suggestions: tracks });
     }
-    return res.json({ trending: [] });
+    return res.json({ suggestions: [] });
   } catch (err: any) {
-    return res.json({ trending: [] });
+    return res.json({ suggestions: [] });
   }
 });
 
@@ -150,8 +134,7 @@ app.post('/api/music/identify', async (req: Request, res: Response) => {
     }
 
     // Clean base64 string and convert to Buffer
-    const cleanBase64 = audioData.replace(/^data:audio\/\w+;base64,/, '');
-    const audioBuffer = Buffer.from(cleanBase64, 'base64');
+    const { buffer: audioBuffer, mimeType, filename } = decodeAudioDataUrl(audioData);
 
     // Build HMAC-SHA1 signature
     const timestamp = Math.floor(Date.now() / 1000).toString();
@@ -166,7 +149,7 @@ app.post('/api/music/identify', async (req: Request, res: Response) => {
 
     // Build multipart form data
     const formData = new FormData();
-    formData.append('sample', new Blob([audioBuffer]), 'sample.webm');
+    formData.append('sample', new Blob([audioBuffer], { type: mimeType }), filename);
     formData.append('sample_bytes', audioBuffer.length.toString());
     formData.append('access_key', accessKey);
     formData.append('data_type', dataType);
@@ -232,7 +215,7 @@ app.post('/api/music/identify', async (req: Request, res: Response) => {
 
   } catch (error: any) {
     console.error('ACRCloud error:', error.message);
-    return res.status(500).json({ success: false, error: 'Internal server error processing audio.' });
+    return res.status(error instanceof HttpError ? error.status : 500).json({ success: false, error: error instanceof HttpError ? error.message : 'Internal server error processing audio.' });
   }
 });
 

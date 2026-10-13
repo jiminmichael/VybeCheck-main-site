@@ -157,8 +157,8 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
     setSong(result.song);
     setArtist(result.artist);
     setGenre((result.genre?.toUpperCase() as Genre) || 'AFROBEATS');
-    setIsAudioIdentified(true);
-    setAudioConfidence(result.confidence);
+    setIsAudioIdentified(!result.isExample);
+    setAudioConfidence(result.isExample ? undefined : result.confidence);
     setSelectedTrackMeta({
       id: `ai-${Date.now()}`,
       song: result.song,
@@ -217,14 +217,15 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
   };
 
   const handleConfirmPriority = () => {
-    if (!submittedRequest) return;
+    if (!submittedRequest || !currentEvent?.tipsEnabled) return;
     let tip = selectedTip || 50000;
     if (customTip) {
-      const parsed = parseFloat(customTip.replace(/[^0-9]/g, ''));
+      const parsed = Number(customTip);
       if (!isNaN(parsed) && parsed > 0) {
         tip = parsed;
       }
     }
+    if (!Number.isFinite(tip) || tip < currentEvent.minTip || tip > currentEvent.maxTip) { setErrorMessage(`Choose a tip between ₦${currentEvent.minTip.toLocaleString()} and ₦${currentEvent.maxTip.toLocaleString()}.`); return; }
     onLaunchPaystack(submittedRequest, tip);
   };
 
@@ -516,7 +517,7 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
               IN THE QUEUE
             </span>
             <span className="font-['Syne'] text-3xl font-bold text-[#F5F2ED]">
-              #{submittedRequest.queuePosition < 10 ? `0${submittedRequest.queuePosition}` : submittedRequest.queuePosition}
+              Pending
             </span>
           </div>
 
@@ -530,14 +531,15 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
 
           <button
             type="button"
+            disabled={!currentEvent?.tipsEnabled}
             onClick={() => setPriorityOpen(!priorityOpen)}
             className="btn btn-gold btn-full mb-3"
           >
-            Make it a Priority
+            {!currentEvent?.tipsEnabled ? 'Tips are paused' : currentEvent.autoPriority ? 'Make it a Priority' : 'Tip the DJ'}
           </button>
 
           {/* PRIORITY & TIP SECTION */}
-          {priorityOpen && (
+          {priorityOpen && currentEvent?.tipsEnabled && (
             <div className="mt-8 pt-8 border-t border-[rgba(255,255,255,0.08)] text-left">
               <span className="text-[11px] uppercase tracking-[0.25em] text-[#C6A15B] font-semibold block">
                 PRIORITY ACCESS
@@ -546,7 +548,7 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
                 MAKE YOUR REQUEST COUNT
               </h3>
               <p className="text-[#8F8C88] text-sm mb-6">
-                Support the DJ. Priority moves differently.
+                {currentEvent?.autoPriority ? 'Verified tips receive VIP priority. The DJ controls playback.' : 'Support the DJ. Tips do not change your queue priority in this session.'}
               </p>
 
               {/* Tip Grid */}
@@ -597,7 +599,7 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
               </div>
 
               <div className="mt-3 text-center text-xs text-[#8F8C88]">
-                Priority is based on verified support.
+                Allowed tips: ₦{currentEvent?.minTip.toLocaleString()}–₦{currentEvent?.maxTip.toLocaleString()}
               </div>
 
               <button
@@ -605,7 +607,7 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
                 onClick={handleConfirmPriority}
                 className="btn btn-gold btn-full mt-5"
               >
-                Confirm Priority
+                Continue to payment
               </button>
             </div>
           )}
