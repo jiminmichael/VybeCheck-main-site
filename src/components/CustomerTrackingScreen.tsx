@@ -57,6 +57,15 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
     return unsub;
   }, [activeToken]);
 
+  useEffect(() => {
+    if (!activeToken) return;
+    let cancelled = false;
+    const refresh = () => store.trackRequest(activeToken).then(found => { if (!cancelled) setRequest(found); }).catch(() => {});
+    void refresh();
+    const timer = setInterval(refresh, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [activeToken]);
+
   const handleSearchToken = (e: React.FormEvent) => {
     e.preventDefault();
     if (tokenInput.trim()) {
@@ -64,14 +73,12 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
     }
   };
 
-  const handleManualRefresh = () => {
+  const handleManualRefresh = async () => {
+    if (!activeToken) return;
     setIsRefreshing(true);
-    setTimeout(() => {
-      if (activeToken) {
-        setRequest(store.getRequestByToken(activeToken));
-      }
-      setIsRefreshing(false);
-    }, 400);
+    try { setRequest(await store.trackRequest(activeToken)); }
+    catch { setRequest(undefined); }
+    finally { setIsRefreshing(false); }
   };
 
   const getStatusConfig = (status: RequestStatus) => {

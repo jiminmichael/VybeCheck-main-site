@@ -56,12 +56,15 @@ export const DJImageUploadModal: React.FC<DJImageUploadModalProps> = ({
   const [previewUrl, setPreviewUrl] = useState<string>(currentImageUrl || '');
   const [customUrl, setCustomUrl] = useState<string>('');
   const [dragOver, setDragOver] = useState(false);
+  const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
   const processFile = (file: File) => {
-    if (!file.type.startsWith('image/')) return;
+    setError('');
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setError('Choose a JPEG, PNG, or WebP image.'); return; }
+    if (file.size >= 5 * 1024 * 1024) { setError('Choose an image smaller than 5 MB.'); return; }
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -237,6 +240,7 @@ export const DJImageUploadModal: React.FC<DJImageUploadModalProps> = ({
           </div>
         )}
 
+        {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-[rgba(255,255,255,0.08)]">
           <button
             type="button"

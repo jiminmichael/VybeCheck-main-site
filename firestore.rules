@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function owner(id) { return signedIn() && request.auth.uid == id; }
+    match /public_djs/{id} { allow read: if true; }
+    match /events/{id} { allow read: if true; }
+    match /djs/{id} { allow read: if owner(id); }
+    match /song_requests/{id} {
+      allow read: if owner(resource.data.djId)
+        || get(/databases/$(database)/documents/events/$(resource.data.eventId)).data.publicQueueEnabled == true;
+    }
+    match /notifications/{id} { allow read: if owner(resource.data.djId); }
+    match /payouts/{id} { allow read: if owner(resource.data.djId); }
+    match /payments/{id} { allow read: if owner(resource.data.djId); }
+    match /queue_history/{id} { allow read: if owner(resource.data.djId); }
+    // All writes go through authenticated, validated server routes using Admin SDK.
+    // This also prevents a browser from setting wallet balances or paid priority.
+    match /{document=**} { allow write: if false; }
+  }
+}

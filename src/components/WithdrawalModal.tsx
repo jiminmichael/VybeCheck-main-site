@@ -173,13 +173,13 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({
 
             <div className="space-y-1">
               <span className="text-[11px] uppercase tracking-[0.2em] text-[#2E8B7A] font-semibold block">
-                TRANSFER SUCCESSFUL
+                {completedPayout.status === 'success' ? 'TRANSFER SUCCESSFUL' : completedPayout.status === 'failed' ? 'TRANSFER FAILED' : 'TRANSFER PROCESSING'}
               </span>
               <h3 className="font-['Syne'] text-2xl font-bold text-[#F5F2ED]">
                 ₦{completedPayout.netAmount.toLocaleString()}
               </h3>
               <p className="text-xs text-[#8F8C88]">
-                Dispatched to {completedPayout.bankName} ({completedPayout.accountNumber})
+                {completedPayout.status === 'success' ? 'Sent to' : completedPayout.status === 'failed' ? 'Not sent to' : 'Awaiting confirmation for'} {completedPayout.bankName} ({completedPayout.accountNumber})
               </p>
             </div>
 

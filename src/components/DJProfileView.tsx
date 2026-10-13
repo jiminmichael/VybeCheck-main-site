@@ -68,6 +68,8 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [selectedTheme, setSelectedTheme] = useState(QR_THEMES[0]);
   const [fullProjectorMode, setFullProjectorMode] = useState(false);
@@ -176,11 +178,13 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
     a.click();
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentDJ) return;
 
-    store.updateDJProfile(currentDJ.id, {
+    setIsSaving(true);
+    setSaveError('');
+    const result = await store.updateDJProfile(currentDJ.id, {
       stageName: stageName.trim(),
       handle: handle.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''),
       bio: bio.trim(),
@@ -195,6 +199,8 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
       customQrTagline: customQrTagline.trim(),
     });
 
+    setIsSaving(false);
+    if (!result.success) { setSaveError(result.error || 'Could not save profile.'); return; }
     setIsEditing(false);
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 3000);
@@ -312,6 +318,7 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
 
   return (
     <div className="max-w-[1200px] mx-auto px-6 py-10 space-y-8">
+      {saveError && <p role="alert" className="p-3 text-rose-300">{saveError}</p>}
       {saveSuccess && (
         <div className="p-4 rounded-xl bg-[rgba(46,139,122,0.15)] border border-[#2E8B7A] text-[#F5F2ED] text-xs flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -647,7 +654,7 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
 
             {isEditing && (
               <div className="pt-4 border-t border-[rgba(255,255,255,0.08)] flex justify-end">
-                <button type="submit" className="btn btn-primary">
+                <button type="submit" disabled={isSaving} className="btn btn-primary">
                   Save Changes
                 </button>
               </div>
@@ -707,27 +714,27 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
               <div className="flex items-center gap-2">
                 <Database className="w-4 h-4 text-[#2E8B7A]" />
                 <h3 className="font-['Syne'] text-base font-bold text-[#F5F2ED]">
-                  Supabase Cloud Database & Storage
+                  Firebase Database & Storage
                 </h3>
               </div>
               <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-[#2E8B7A]/20 text-[#2E8B7A] border border-[#2E8B7A]/30">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#2E8B7A] animate-pulse"></span>
-                PostgreSQL & Realtime Ready
+                Live updates
               </span>
             </div>
 
             <p className="text-xs text-[#8F8C88] leading-relaxed">
-              All live crowd song requests, payments, DJ tips, and notifications are backed by a scalable Supabase PostgreSQL schema with row-level security and Realtime publications.
+              Live song requests, DJ profiles, payments, and notifications sync through Cloud Firestore. Profile images are stored in Firebase Storage.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-xs">
               <div className="p-3 rounded-xl bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.06)]">
-                <span className="text-[10px] text-[#8F8C88] uppercase tracking-wider block">Database Tables</span>
+                <span className="text-[10px] text-[#8F8C88] uppercase tracking-wider block">Collections</span>
                 <span className="font-mono text-[#E6D3A3] text-xs mt-1 block">djs, events, song_requests, payments, payouts</span>
               </div>
               <div className="p-3 rounded-xl bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.06)]">
-                <span className="text-[10px] text-[#8F8C88] uppercase tracking-wider block">Realtime Channels</span>
-                <span className="font-mono text-[#2E8B7A] text-xs mt-1 block">supabase_realtime (Active)</span>
+                <span className="text-[10px] text-[#8F8C88] uppercase tracking-wider block">Live data</span>
+                <span className="font-mono text-[#2E8B7A] text-xs mt-1 block">Cloud Firestore</span>
               </div>
             </div>
           </div>
@@ -749,14 +756,15 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
         title={imageModalState.title}
         currentImageUrl={imageModalState.currentUrl}
         onClose={() => setImageModalState((prev) => ({ ...prev, isOpen: false }))}
-        onSelectImage={(newUrl) => {
-          if (imageModalState.type === 'avatar') {
-            setAvatarUrl(newUrl);
-            store.updateDJProfile(currentDJ.id, { avatarUrl: newUrl });
-          } else {
-            setCoverUrl(newUrl);
-            store.updateDJProfile(currentDJ.id, { coverUrl: newUrl });
-          }
+        onSelectImage={async (newUrl) => {
+          setSaveError('');
+          setIsSaving(true);
+          const field = imageModalState.type === 'avatar' ? 'avatarUrl' : 'coverUrl';
+          const result = await store.updateDJProfile(currentDJ.id, { [field]: newUrl });
+          setIsSaving(false);
+          if (!result.success) { setSaveError(result.error || 'Could not upload image.'); return; }
+          if (field === 'avatarUrl') setAvatarUrl(result.dj.avatarUrl);
+          else setCoverUrl(result.dj.coverUrl || '');
           setSaveSuccess(true);
           setTimeout(() => setSaveSuccess(false), 3000);
         }}

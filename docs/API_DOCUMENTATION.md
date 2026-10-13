@@ -1,206 +1,31 @@
-# VYBECHECK API & Integration Documentation (MVP Specification)
+# Firebase-backed API
 
-## 1. Overview
-Vybecheck connects nightclub and event audiences directly with DJs via QR codes, allowing guests to submit paid song requests, tip via Paystack in Nigerian Naira (₦ NGN), and enabling DJs to execute instant automated payouts into their local Nigerian bank accounts (NUBAN).
+The local server, Vercel compatibility entrypoint, and Firebase Function share `server/app.ts`.
 
----
+Authenticated endpoints require `Authorization: Bearer <Firebase ID token>`. The server verifies expiration, revocation and user ownership. DJ IDs are Firebase UIDs. Do not send passwords to the API: use Firebase Auth in the browser.
 
-## 2. Environment Variables Configuration
+| Endpoint | Purpose | Access |
+| --- | --- | --- |
+| `POST /api/auth/profile` | Create/load profile and initial session | Signed-in user |
+| `PUT /api/djs/:id` | Update permitted profile fields | Owner |
+| `POST /api/events` | Create session | Signed-in DJ |
+| `PATCH /api/events/:id` | Change session controls | Owner |
+| `POST /api/requests` | Submit song; paid amount starts at zero | Guest |
+| `GET /api/requests/track/:token` | Track one request | Holder of tracking token |
+| `PATCH /api/requests/:id/status` | Update queue status and history | Owner |
+| `POST /api/requests/reorder` | Reorder `orderedIds` atomically | Owner |
+| `PATCH /api/notifications/:id/read` | Mark notification read | Owner |
+| `POST /api/payments/initialize` | Create checkout from `requestId`, `amount`, `customerEmail` | Guest |
+| `POST /api/payments/verify` | Verify provider payment using `reference`, `requestId` | Guest |
+| `POST /api/payments/webhook` | Settle signed charge/transfer events | Paystack HMAC |
+| `GET /api/payout/banks` | List Nigerian banks | Public |
+| `POST /api/payout/resolve-account` | Resolve account with Paystack | Signed-in user |
+| `POST /api/payout/withdraw` | Reserve funds and initiate transfer | Signed-in owner |
+| `GET /api/payout/history/:djId` | Read payout history | Owner |
+| `GET /api/firebase/status` | Check Firestore connectivity | Public |
+| `GET /api/health` | Server liveness | Public |
+| `/api/music/search`, `/api/music/trending`, `/api/music/identify` | Existing catalog/audio features | Public |
 
-Set these in your environment or `.env` file:
+All monetary amounts use naira at the application boundary; Paystack uses integer kobo. Withdrawal requests include a stable `reference` (`payout-<UUID>`) and bank details. Reuse that reference after a network failure. Processing means provider confirmation is still pending; it is not a successful settlement.
 
-```env
-# Server Configuration
-PORT=3000
-NODE_ENV=production
-
-# Paystack API Keys (Nigerian Payments & Instant Transfers)
-PAYSTACK_SECRET_KEY=sk_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-PAYSTACK_PUBLIC_KEY=pk_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# DJ Auth & Webhook Secrets
-PAYSTACK_WEBHOOK_SECRET=sk_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-SESSION_SECRET=super_secret_session_key_vybecheck
-```
-
----
-
-## 3. Endpoints Reference
-
-### 3.1 Public Song Requests
-
-#### `POST /api/requests`
-Submit a new guest song request with optional initial VIP tip.
-- **Request Body**:
-  ```json
-  {
-    "song": "Last Last",
-    "artist": "Burna Boy",
-    "genre": "Afrobeats",
-    "requesterName": "Tunde",
-    "vipShoutout": "Special birthday shoutout to the VIP table 4!",
-    "tipAmount": 25000,
-    "djId": "dj_bama_lagos"
-  }
-  ```
-- **Response `201 Created`**:
-  ```json
-  {
-    "success": true,
-    "request": {
-      "id": "req_1720000000000_abc123",
-      "trackingToken": "TRK-CITY-8912",
-      "song": "Last Last",
-      "artist": "Burna Boy",
-      "genre": "Afrobeats",
-      "requesterName": "Tunde",
-      "vipShoutout": "Special birthday shoutout to the VIP table 4!",
-      "status": "pending",
-      "priority": true,
-      "tipAmount": 25000,
-      "createdAt": "2026-08-25T10:00:00.000Z"
-    }
-  }
-  ```
-
-#### `GET /api/requests`
-Fetch real-time request queue.
-- **Query Params**: `?eventId=evt_matrix_lagos_01` (optional)
-- **Response `200 OK`**:
-  ```json
-  {
-    "success": true,
-    "requests": [ ... ]
-  }
-  ```
-
----
-
-### 3.2 Paystack Payments (Audience Tipping & Priority Elevation)
-
-#### `POST /api/payments/initialize`
-Initializes a Paystack checkout transaction for a song request.
-- **Request Body**:
-  ```json
-  {
-    "requestId": "req_1720000000000_abc123",
-    "amount": 50000,
-    "email": "tunde@example.com",
-    "callbackUrl": "https://vybecheckwithbama.live/#customer_tracking"
-  }
-  ```
-- **Response `200 OK`**:
-  ```json
-  {
-    "success": true,
-    "authorizationUrl": "https://checkout.paystack.com/39a8xb12984",
-    "accessCode": "39a8xb12984",
-    "reference": "vybe_req_1720000000000_abc123_1724567890"
-  }
-  ```
-
-#### `GET /api/payments/verify/:reference`
-Verifies a transaction after successful client authorization and elevates the song to VIP priority.
-- **Response `200 OK`**:
-  ```json
-  {
-    "success": true,
-    "status": "success",
-    "amount": 50000,
-    "requestId": "req_1720000000000_abc123",
-    "request": {
-      "id": "req_1720000000000_abc123",
-      "status": "up_next",
-      "priority": true,
-      "tipAmount": 50000
-    }
-  }
-  ```
-
-#### `POST /api/payments/webhook`
-Receives asynchronous webhooks from Paystack with HMAC-SHA512 header verification (`x-paystack-signature`).
-- Automatically credits the DJ's `availableBalance` and marks the song request as elevated VIP.
-
----
-
-### 3.3 Instant DJ Payouts & NUBAN Banking
-
-#### `GET /api/payout/banks`
-Returns all Nigerian commercial banks and fintech providers supported by Paystack.
-- **Response `200 OK`**:
-  ```json
-  {
-    "success": true,
-    "banks": [
-      { "id": 1, "name": "Access Bank", "code": "044" },
-      { "id": 2, "name": "Guaranty Trust Bank (GTBank)", "code": "058" },
-      { "id": 3, "name": "Zenith Bank", "code": "057" },
-      { "id": 4, "name": "Kuda Bank", "code": "50211" },
-      { "id": 5, "name": "OPay", "code": "999992" },
-      { "id": 6, "name": "PalmPay", "code": "999991" }
-    ]
-  }
-  ```
-
-#### `GET /api/payout/resolve-account?accountNumber=0124892019&bankCode=058`
-Validates a Nigerian bank account number with the NIBSS central registry and returns the verified account holder name.
-- **Response `200 OK`**:
-  ```json
-  {
-    "success": true,
-    "accountName": "BABATUNDE ADENIYI (DJ BAMA)",
-    "accountNumber": "0124892019",
-    "bankCode": "058"
-  }
-  ```
-
-#### `POST /api/payout/withdraw`
-Triggers an instant NIBSS automated withdrawal from the DJ's available wallet balance.
-- **Request Body**:
-  ```json
-  {
-    "djId": "dj_bama_lagos",
-    "amount": 75000,
-    "bankDetails": {
-      "bankName": "Guaranty Trust Bank (GTBank)",
-      "accountNumber": "0124892019",
-      "accountName": "Babatunde Adeniyi",
-      "bankCode": "058"
-    }
-  }
-  ```
-- **Response `200 OK`**:
-  ```json
-  {
-    "success": true,
-    "message": "Instant withdrawal of ₦75,000 processed successfully",
-    "payout": {
-      "id": "payout_1724567890_99182",
-      "djId": "dj_bama_lagos",
-      "amount": 75000,
-      "fee": 25,
-      "netAmount": 74975,
-      "bankName": "Guaranty Trust Bank (GTBank)",
-      "accountNumber": "0124892019",
-      "accountName": "Babatunde Adeniyi",
-      "reference": "PO-1724567890123-9918",
-      "status": "success",
-      "createdAt": "2026-08-25T10:30:00.000Z"
-    },
-    "wallet": {
-      "availableBalance": 425000,
-      "totalWithdrawn": 75000,
-      "totalTipsEarned": 500000
-    }
-  }
-  ```
-
----
-
-## 4. Database Schema (SQLite / Django ORM Compatible)
-
-- **`djs`**: DJ profiles, credentials, branding, wallet ledger (`availableBalance`, `totalWithdrawn`, `totalTipsEarned`), and Paystack recipient codes.
-- **`events`**: Live sessions, venue details, and toggle flags (`requestsEnabled`, `autoPriority`, `tipsEnabled`).
-- **`requests`**: Song requests with tracking tokens, VIP status, tip amounts, and status transitions (`pending` -> `up_next` -> `playing` -> `played` / `rejected`).
-- **`payouts`**: Immutable transaction log of all withdrawals and bank settlements.
-- **`magic_tokens`**: Passwordless magic link tokens for DJ authentication.
+Clients subscribe to Firestore for live reads. See `firestore.rules` and `storage.rules` for access policies. Payment records, tips, and wallet balances are updated together in a server transaction. Legacy demo login, SQL password login and custom OTP endpoints have been removed.

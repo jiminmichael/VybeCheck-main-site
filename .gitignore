@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.firebase/
+*-debug.log
+functions/lib/
+functions/node_modules/
+functions/.env*
+functions/.secret.local
+*service-account*.json
+*firebase-adminsdk*.json
+migration-report*.json

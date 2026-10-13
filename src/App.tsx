@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { isSignInWithEmailLink } from 'firebase/auth';
+import { auth } from './services/firebase';
 import { NavigationHeader } from './components/NavigationHeader';
 import { PublicRequestPortal } from './components/PublicRequestPortal';
 import { CustomerTrackingScreen } from './components/CustomerTrackingScreen';
@@ -62,20 +64,6 @@ export default function App() {
           store.setCurrentEventBySlug(slug);
           setCurrentView('public_request');
         }
-      } else if (hash.startsWith('#magic-login')) {
-        const queryStr = hash.includes('?') ? hash.split('?')[1] : '';
-        const params = new URLSearchParams(queryStr);
-        const token = params.get('token') || '';
-        const email = params.get('email') || undefined;
-        const code = params.get('code') || undefined;
-        if (token || code) {
-          try {
-            const res = await store.verifyMagicLink(token || code!, email);
-            if (res.success) {
-              setCurrentView('dj_profile');
-            }
-          } catch (e) {}
-        }
       } else if (hash === '#dashboard' || hash === '#dj') {
         if (store.isAuthenticatedDJ()) setCurrentView('dj_dashboard');
         else handleOpenAuth('login');
@@ -87,6 +75,7 @@ export default function App() {
       }
     };
 
+    if (isSignInWithEmailLink(auth, window.location.href)) setAuthModal({ isOpen: true, mode: 'login' });
     handleHash();
     window.addEventListener('hashchange', handleHash);
     return () => window.removeEventListener('hashchange', handleHash);
@@ -96,6 +85,7 @@ export default function App() {
     const unsub = store.subscribe(() => {
       setNotifications([...store.getNotifications()]);
       setCurrentDJ(store.isAuthenticatedDJ() ? store.getCurrentDJ() : undefined);
+      if (!store.isAuthenticatedDJ()) setCurrentView(view => view === 'dj_dashboard' || view === 'dj_profile' ? 'public_request' : view);
       setBackendReady(store.isReady());
       setBackendError(store.getInitializationError());
     });
@@ -132,12 +122,17 @@ export default function App() {
       handleOpenAuth('login');
       return;
     }
+    if (view === 'dj_dashboard') {
+      const dj = store.getCurrentDJ();
+      const ownEvent = store.getEvents().find(event => event.djId === dj?.id);
+      if (ownEvent && store.getCurrentEvent()?.djId !== dj?.id) store.setCurrentEvent(ownEvent.id);
+    }
     setCurrentView(view);
   };
 
   const unreadNotifications = notifications.filter((n) => !n.read).slice(0, 3);
 
-  if (backendReady && !backendError && store.getEvents().length === 0) {
+  if (backendReady && !backendError && !currentDJ && store.getEvents().length === 0) {
     return (
       <div className="min-h-screen bg-[#070708] text-[#F5F2ED] flex flex-col font-['Inter',sans-serif] relative">
         <div className="bg-atmosphere" />
@@ -150,7 +145,7 @@ export default function App() {
         />
         <main className="flex-1 relative z-10 flex items-center justify-center px-6 py-20">
           <div className="max-w-lg text-center space-y-5">
-            <div className="text-xs uppercase tracking-[0.25em] text-[#C6A15B]">Supabase workspace ready</div>
+            <div className="text-xs uppercase tracking-[0.25em] text-[#C6A15B]">Your workspace is ready</div>
             <h1 className="font-['Syne'] text-3xl sm:text-4xl font-bold">Create your first live session</h1>
             <p className="text-sm leading-6 text-[#8F8C88]">Your database is connected, but it has no DJ profiles or events yet. Create a DJ profile or sign in to load your live workspace.</p>
             <button onClick={() => handleOpenAuth('signup')} className="btn btn-primary">Create DJ Profile</button>
@@ -195,6 +190,8 @@ export default function App() {
         activeTrackingToken={activeTrackingToken}
       />
 
+      {backendError && <p role="alert" className="m-4 rounded-lg border border-rose-400/30 bg-rose-950/30 p-3 text-sm text-rose-200">Unable to sync your workspace: {backendError}</p>}
+
       {/* Main Content Area */}
       <main className="flex-1 w-full relative z-10">
         {currentView === 'public_request' && (
@@ -212,7 +209,7 @@ export default function App() {
           />
         )}
 
-        {currentView === 'dj_dashboard' && (
+        {currentView === 'dj_dashboard' && currentDJ && (
           <DJDashboard
             onOpenQr={() => setQrModalOpen(true)}
             onNavigateToLiveStage={() => setCurrentView('live_stage')}
@@ -220,9 +217,9 @@ export default function App() {
           />
         )}
 
-        {currentView === 'dj_profile' && (
+        {currentView === 'dj_profile' && currentDJ && (
           <DJProfileView
-            onNavigateToDashboard={() => setCurrentView('dj_dashboard')}
+            onNavigateToDashboard={() => handleNavigate('dj_dashboard')}
             onOpenAuthModal={handleOpenAuth}
           />
         )}
@@ -277,14 +274,14 @@ export default function App() {
           <div
             key={notif.id}
             className={`pointer-events-auto rounded-xl p-4 bg-[#0E0E12]/95 backdrop-blur-xl border border-[rgba(255,255,255,0.14)] shadow-2xl transition-all duration-400 flex items-center justify-between gap-3 ${
-              notif.type === 'tip_received'
+              notif.type === 'tip_confirmed'
                 ? 'border-l-[3px] border-l-[#C6A15B]'
                 : 'border-l-[3px] border-l-[#5B3FD1]'
             }`}
           >
             <div className="min-w-0 flex-1">
               <div className="text-[10px] uppercase tracking-[0.2em] text-[#8F8C88] mb-1 font-semibold">
-                {notif.type === 'tip_received' ? 'NEW VIP REQUEST' : 'NEW SONG REQUEST'}
+                {notif.type === 'tip_confirmed' ? 'NEW VIP REQUEST' : 'NEW SONG REQUEST'}
               </div>
               <div className="font-['Syne'] font-bold text-sm text-[#F5F2ED] truncate">
                 {notif.message}

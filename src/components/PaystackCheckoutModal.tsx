@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { usePaystackPayment } from 'react-paystack';
+import { api } from '../services/firebase';
 import { 
   CreditCard, ShieldCheck, X, CheckCircle2, Crown 
 } from 'lucide-react';
@@ -24,31 +24,21 @@ export const PaystackCheckoutModal: React.FC<PaystackCheckoutModalProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
 
-  const config = {
-    reference: `PAY_VYBE_${new Date().getTime().toString()}`,
-    email: email,
-    amount: tipAmount * 100, 
-    // Updated for Vite compatibility
-    publicKey: (import.meta as any).env?.VITE_PAYSTACK_PUBLIC_KEY || 'pk_test_YOUR_KEY_HERE',
-    metadata: {
-      custom_fields: [
-        { display_name: "Song", variable_name: "song", value: request.song },
-        { display_name: "Event ID", variable_name: "event_id", value: request.eventId }
-      ]
-    }
-  };
-
-  const initializePayment = usePaystackPayment(config);
+  const [checkout, setCheckout] = useState<{ reference: string; authorizationUrl: string } | null>(() => {
+    try { return JSON.parse(sessionStorage.getItem(`checkout-${request.id}`) || 'null'); } catch { return null; }
+  });
+  const [error, setError] = useState('');
 
   const handlePaystackSuccess = async (reference: any) => {
     const verified = await store.verifyTipPayment(request.id, tipAmount, reference?.reference || reference);
     if (!verified) {
       setIsProcessing(false);
-      window.alert('Payment could not be verified. Please contact support before trying again.');
+      setError('Payment is not confirmed yet. If you paid, wait a moment and check again.');
       return;
     }
     setIsProcessing(false);
     setPaymentSuccess(true);
+    sessionStorage.removeItem(`checkout-${request.id}`);
     
     confetti({
       particleCount: 100,
@@ -62,17 +52,20 @@ export const PaystackCheckoutModal: React.FC<PaystackCheckoutModalProps> = ({
     }, 3000);
   };
 
-  const handlePaystackClose = () => {
-    setIsProcessing(false);
-  };
-
-  const handlePay = (e: React.FormEvent) => {
+  const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) return;
     setIsProcessing(true);
-    
-    initializePayment({ onSuccess: handlePaystackSuccess, onClose: handlePaystackClose });
+    setError('');
+    try {
+      const result = await api('/api/payments/initialize', { requestId: request.id, amount: tipAmount, customerEmail: email.trim() });
+      const next = { reference: result.reference, authorizationUrl: result.authorizationUrl };
+      sessionStorage.setItem(`checkout-${request.id}`, JSON.stringify(next));
+      setCheckout(next);
+    } catch (error) { setError(error instanceof Error ? error.message : 'Could not start payment.'); }
+    finally { setIsProcessing(false); }
   };
+
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
@@ -90,7 +83,14 @@ export const PaystackCheckoutModal: React.FC<PaystackCheckoutModalProps> = ({
           </button>
         </div>
 
-        {paymentSuccess ? (
+        {error && <p role="alert" className="px-5 pt-4 text-sm text-rose-300">{error}</p>}
+        {checkout && !paymentSuccess ? (
+          <div className="p-6 space-y-4 text-center">
+            <p className="text-sm">Complete your payment securely with Paystack, then return here to confirm.</p>
+            <a className="btn btn-primary btn-full" href={checkout.authorizationUrl} target="_blank" rel="noopener noreferrer">Open secure checkout</a>
+            <button className="btn btn-full border border-white/20" disabled={isProcessing} onClick={() => { setIsProcessing(true); void handlePaystackSuccess(checkout.reference); }}>{isProcessing ? 'Checking payment…' : 'I have paid — check payment'}</button>
+          </div>
+        ) : paymentSuccess ? (
           <div className="p-8 text-center space-y-4">
             <div className="w-14 h-14 rounded-full bg-[rgba(46,139,122,0.15)] border border-[#2E8B7A] flex items-center justify-center mx-auto">
               <CheckCircle2 className="w-7 h-7 text-[#2E8B7A]" />

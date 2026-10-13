@@ -22,308 +22,490 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // server.ts
-var import_express = __toESM(require("express"), 1);
-var import_path2 = __toESM(require("path"), 1);
-var import_crypto = __toESM(require("crypto"), 1);
+var import_node_path = __toESM(require("node:path"), 1);
 var import_vite = require("vite");
+
+// server/app.ts
+var import_node_crypto2 = __toESM(require("node:crypto"), 1);
+var import_express2 = __toESM(require("express"), 1);
 var import_genai = require("@google/genai");
 var import_config = require("dotenv/config");
 
-// server/db.ts
-var import_sql = __toESM(require("sql.js"), 1);
-var import_fs = __toESM(require("fs"), 1);
-var import_path = __toESM(require("path"), 1);
-var dbInstance = null;
-var DB_FILE = import_path.default.join(process.cwd(), "vybecheck.sqlite");
-async function getDb() {
-  if (dbInstance) return dbInstance;
-  const SQL = await (0, import_sql.default)();
-  let buffer = null;
-  if (import_fs.default.existsSync(DB_FILE)) {
+// server/firebaseRoutes.ts
+var import_express = require("express");
+var import_node_crypto = __toESM(require("node:crypto"), 1);
+var import_firestore2 = require("firebase-admin/firestore");
+
+// server/firebase.ts
+var import_app = require("firebase-admin/app");
+var import_auth = require("firebase-admin/auth");
+var import_firestore = require("firebase-admin/firestore");
+function adminApp() {
+  if ((0, import_app.getApps)().length) return (0, import_app.getApps)()[0];
+  const projectId = process.env.FIREBASE_PROJECT_ID || "vybecheck-6a8b7";
+  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  return (0, import_app.initializeApp)({
+    projectId,
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "vybecheck-6a8b7.firebasestorage.app",
+    ...process.env.FIRESTORE_EMULATOR_HOST ? {} : {
+      credential: serviceAccount ? (0, import_app.cert)(JSON.parse(serviceAccount)) : (0, import_app.applicationDefault)()
+    }
+  });
+}
+var adminAuth = () => (0, import_auth.getAuth)(adminApp());
+var firestore = () => (0, import_firestore.getFirestore)(adminApp());
+
+// server/domain.ts
+var HttpError = class extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
+function apiErrorResponse(error) {
+  if (error instanceof HttpError) return { status: error.status, message: error.message };
+  const message = error instanceof Error ? error.message : "";
+  if (message.includes("Cloud Firestore API") && (message.includes("disabled") || message.includes("has not been used"))) {
+    return { status: 503, message: "Cloud Firestore is not enabled for this Firebase project. Enable the Cloud Firestore API and create the default Firestore database in Firebase Console, then retry. If you just enabled it, allow a few minutes for activation." };
+  }
+  return { status: 500, message: "Server request failed. Check Firebase server configuration and logs." };
+}
+function text(value, label, max = 200, required = true) {
+  if (typeof value !== "string" || required && !value.trim() || value.length > max) {
+    throw new HttpError(400, `Invalid ${label}.`);
+  }
+  return value.trim();
+}
+function documentId(value) {
+  const id = text(value, "document ID", 150);
+  if (id.includes("/") || id === "." || id === "..") throw new HttpError(400, "Invalid document ID.");
+  return id;
+}
+function amountInKobo(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 1e6 || Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-3) {
+    throw new HttpError(400, "Enter a valid amount with at most two decimal places.");
+  }
+  return Math.round(amount * 100);
+}
+var profileFields = ["name", "stageName", "handle", "bio", "avatarUrl", "coverUrl", "phone", "instagramHandle", "twitterHandle", "genres", "defaultVenue", "minTipAmount", "qrTheme", "customQrTagline", "bankName", "bankCode", "accountNumber", "accountName"];
+function profilePatch(input) {
+  const patch = {};
+  for (const key of profileFields) {
+    if (input[key] === void 0) continue;
+    if (key === "genres") {
+      if (!Array.isArray(input[key]) || input[key].length > 20 || input[key].some((v) => typeof v !== "string" || v.length > 40)) throw new HttpError(400, "Invalid genres.");
+      patch[key] = input[key];
+    } else if (key === "minTipAmount") {
+      const amount = Number(input[key]);
+      if (!Number.isFinite(amount) || amount < 0 || amount > 1e6) throw new HttpError(400, "Invalid minimum tip.");
+      patch[key] = amount;
+    } else {
+      patch[key] = text(input[key], key, key.endsWith("Url") ? 3e3 : 1e3, ["name", "stageName", "handle"].includes(key));
+      if (key.endsWith("Url") && patch[key] && !/^https:\/\//.test(patch[key])) throw new HttpError(400, "Images must use HTTPS URLs.");
+    }
+  }
+  if (patch.handle && !/^[a-z0-9_-]{3,40}$/.test(patch.handle)) throw new HttpError(400, "Use 3\u201340 lowercase letters, numbers, underscores or hyphens for your handle.");
+  return patch;
+}
+function publicProfile(profile) {
+  return Object.fromEntries(["id", "name", "stageName", "handle", "bio", "avatarUrl", "coverUrl", "genres", "defaultVenue", "minTipAmount", "qrTheme", "customQrTagline", "instagramHandle", "twitterHandle", "createdAt"].filter((k) => profile[k] !== void 0).map((k) => [k, profile[k]]));
+}
+function validateVerifiedPayment(payment, verified) {
+  if (verified.status !== "success" || verified.currency !== "NGN" || verified.reference !== payment.reference || verified.amount !== payment.amountKobo || verified.metadata?.requestId !== payment.requestId) {
+    throw new HttpError(400, "Payment details do not match this checkout.");
+  }
+}
+
+// server/firebaseRoutes.ts
+var firebaseRoutes = (0, import_express.Router)();
+var now = () => (/* @__PURE__ */ new Date()).toISOString();
+var route = (fn) => (req, res, next) => void fn(req, res).catch(next);
+async function identity(req) {
+  const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+  if (!token) throw new HttpError(401, "Sign in to continue.");
+  try {
+    return await adminAuth().verifyIdToken(token, true);
+  } catch {
+    throw new HttpError(401, "Your session expired. Please sign in again.");
+  }
+}
+async function owned(req, collection, id) {
+  const user = await identity(req);
+  const ref = firestore().collection(collection).doc(documentId(id));
+  const snapshot = await ref.get();
+  if (!snapshot.exists) throw new HttpError(404, "Record not found.");
+  const data = snapshot.data();
+  if ((collection === "djs" ? data.id : data.djId) !== user.uid) throw new HttpError(403, "You cannot modify this record.");
+  return { ref, data, user };
+}
+async function paystack(path2, body) {
+  if (!process.env.PAYSTACK_SECRET_KEY) throw new HttpError(503, "Payments are not configured.");
+  const response = await fetch(`https://api.paystack.co${path2}`, {
+    method: body ? "POST" : "GET",
+    headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`, "Content-Type": "application/json" },
+    ...body ? { body: JSON.stringify(body) } : {},
+    signal: AbortSignal.timeout(2e4)
+  });
+  const result = await response.json();
+  if (!response.ok || !result.status) throw new HttpError(502, result.message || "Paystack request failed.");
+  return result.data;
+}
+function initialEvent(dj, id) {
+  return {
+    id,
+    djId: dj.id,
+    name: `${dj.stageName} Live Session`,
+    slug: dj.handle,
+    description: `Live requests for ${dj.stageName}`,
+    djName: dj.stageName,
+    djEmail: "",
+    venue: dj.defaultVenue,
+    eventDate: now(),
+    createdAt: now(),
+    isActive: true,
+    requestsEnabled: true,
+    publicQueueEnabled: true,
+    autoPriority: true,
+    tipsEnabled: true,
+    minTip: dj.minTipAmount,
+    maxTip: 1e6
+  };
+}
+firebaseRoutes.post("/auth/profile", route(async (req, res) => {
+  const user = await identity(req);
+  const db = firestore();
+  const djRef = db.collection("djs").doc(user.uid);
+  const patch = profilePatch(req.body || {});
+  const dj = await db.runTransaction(async (tx) => {
+    const existing = await tx.get(djRef);
+    if (existing.exists) return existing.data();
+    if (!user.email) throw new HttpError(400, "An email address is required for your DJ account.");
+    const handle = patch.handle || `dj-${user.uid.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 24)}`;
+    const handleRef = db.collection("handles").doc(handle);
+    if ((await tx.get(handleRef)).exists) throw new HttpError(409, "This DJ handle is already taken. Choose another.");
+    const profile = {
+      name: user.name || user.email.split("@")[0],
+      stageName: user.name || "DJ",
+      handle,
+      bio: "",
+      avatarUrl: user.picture || "",
+      genres: ["Afrobeats", "Amapiano"],
+      defaultVenue: "Add your venue",
+      minTipAmount: 1e4,
+      ...patch,
+      id: user.uid,
+      email: user.email,
+      authUserId: user.uid,
+      isVerified: !!user.email_verified,
+      availableBalance: 0,
+      totalWithdrawn: 0,
+      totalTipsEarned: 0,
+      totalRequestsReceived: 0,
+      totalSongsPlayed: 0,
+      createdAt: now()
+    };
+    tx.create(djRef, profile);
+    tx.create(handleRef, { djId: user.uid });
+    tx.set(db.collection("public_djs").doc(user.uid), publicProfile(profile));
+    tx.create(db.collection("events").doc(`initial-${user.uid}`), initialEvent(profile, `initial-${user.uid}`));
+    return profile;
+  });
+  res.json({ success: true, dj });
+}));
+firebaseRoutes.put("/djs/:id", route(async (req, res) => {
+  const { ref, user } = await owned(req, "djs", String(req.params.id));
+  const patch = profilePatch(req.body);
+  const db = firestore();
+  const dj = await db.runTransaction(async (tx) => {
+    const old = (await tx.get(ref)).data();
+    if (patch.handle && patch.handle !== old.handle) {
+      const target = db.collection("handles").doc(patch.handle);
+      if ((await tx.get(target)).exists) throw new HttpError(409, "This DJ handle is already taken.");
+      tx.create(target, { djId: user.uid });
+      tx.delete(db.collection("handles").doc(old.handle));
+    }
+    const updated = { ...old, ...patch };
+    tx.update(ref, patch);
+    tx.set(db.collection("public_djs").doc(user.uid), publicProfile(updated));
+    return updated;
+  });
+  res.json({ success: true, dj });
+}));
+firebaseRoutes.post("/events", route(async (req, res) => {
+  const user = await identity(req);
+  const dj = (await firestore().collection("djs").doc(user.uid).get()).data();
+  if (!dj) throw new HttpError(404, "Create your DJ profile first.");
+  const ref = firestore().collection("events").doc();
+  const event = { ...initialEvent(dj, ref.id), name: text(req.body.name, "event name"), venue: text(req.body.venue, "venue"), slug: `${dj.handle}-${ref.id}` };
+  await ref.create(event);
+  res.json({ success: true, event });
+}));
+firebaseRoutes.patch("/events/:id", route(async (req, res) => {
+  const { ref } = await owned(req, "events", String(req.params.id));
+  const patch = {};
+  for (const key of ["isActive", "requestsEnabled", "publicQueueEnabled", "autoPriority", "tipsEnabled"]) {
+    if (req.body[key] !== void 0) {
+      if (typeof req.body[key] !== "boolean") throw new HttpError(400, `Invalid ${key}.`);
+      patch[key] = req.body[key];
+    }
+  }
+  for (const key of ["name", "venue", "description"]) if (req.body[key] !== void 0) patch[key] = text(req.body[key], key, 1e3, false);
+  for (const key of ["minTip", "maxTip"]) if (req.body[key] !== void 0) {
+    const n = Number(req.body[key]);
+    if (!Number.isFinite(n) || n < 0 || n > 1e6) throw new HttpError(400, "Invalid tip limit.");
+    patch[key] = n;
+  }
+  await ref.update(patch);
+  res.json({ success: true });
+}));
+firebaseRoutes.post("/requests", route(async (req, res) => {
+  if (req.body.honeypot) throw new HttpError(400, "Spam submission detected.");
+  const eventId = documentId(req.body.eventId);
+  const song = text(req.body.song, "song");
+  const artist = text(req.body.artist, "artist");
+  const db = firestore();
+  const ref = db.collection("song_requests").doc();
+  const eventRef = db.collection("events").doc(eventId);
+  const request = await db.runTransaction(async (tx) => {
+    const event = (await tx.get(eventRef)).data();
+    if (!event?.isActive || !event.requestsEnabled) throw new HttpError(400, "This session is not accepting requests.");
+    const djRef = db.collection("djs").doc(event.djId);
+    const dj = (await tx.get(djRef)).data();
+    if (!dj) throw new HttpError(404, "DJ not found.");
+    const request2 = {
+      id: ref.id,
+      djId: event.djId,
+      eventId,
+      song,
+      artist,
+      genre: text(req.body.genre || "Other", "genre", 40),
+      requesterName: text(req.body.requesterName || "Anonymous Fan", "name", 100),
+      dedication: text(req.body.dedication || "", "dedication", 1e3, false),
+      tipAmount: 0,
+      priority: false,
+      status: "pending",
+      queuePosition: Date.now(),
+      trackingToken: import_node_crypto.default.randomUUID(),
+      createdAt: now(),
+      updatedAt: now()
+    };
+    for (const key of ["artworkUrl", "previewUrl", "album"]) if (req.body[key]) request2[key] = text(req.body[key], key, 3e3);
+    if (req.body.identifiedViaAudio === true) request2.identifiedViaAudio = true;
+    if (Number.isFinite(req.body.audioConfidence)) request2.audioConfidence = req.body.audioConfidence;
+    tx.create(ref, request2);
+    tx.update(djRef, { totalRequestsReceived: import_firestore2.FieldValue.increment(1) });
+    const notification = db.collection("notifications").doc();
+    tx.create(notification, { id: notification.id, djId: event.djId, type: "new_request", title: "New song request", message: `${song} by ${artist}`, song, artist, read: false, timestamp: now() });
+    return request2;
+  });
+  res.json({ success: true, request });
+}));
+firebaseRoutes.get("/requests/track/:token", route(async (req, res) => {
+  const docs = await firestore().collection("song_requests").where("trackingToken", "==", documentId(req.params.token)).limit(1).get();
+  if (docs.empty) throw new HttpError(404, "Request not found.");
+  res.json({ success: true, request: docs.docs[0].data() });
+}));
+firebaseRoutes.patch("/requests/:id/status", route(async (req, res) => {
+  const { ref, user } = await owned(req, "song_requests", String(req.params.id));
+  const status = req.body.status;
+  if (!["pending", "up_next", "playing", "played", "rejected"].includes(status)) throw new HttpError(400, "Invalid request status.");
+  const db = firestore();
+  await db.runTransaction(async (tx) => {
+    const request = (await tx.get(ref)).data();
+    const eventRef = db.collection("events").doc(request.eventId);
+    const event = (await tx.get(eventRef)).data();
+    const previousRef = event?.playingRequestId && event.playingRequestId !== ref.id ? db.collection("song_requests").doc(event.playingRequestId) : null;
+    const previous = previousRef ? (await tx.get(previousRef)).data() : null;
+    const patch = { status, updatedAt: now() };
+    if (status === "playing") {
+      patch.playingStartedAt = now();
+      if (previous?.status === "playing" && previousRef) {
+        tx.update(previousRef, { status: "played", playedAt: now(), updatedAt: now() });
+        tx.update(db.collection("djs").doc(user.uid), { totalSongsPlayed: import_firestore2.FieldValue.increment(1) });
+      }
+      tx.update(eventRef, { playingRequestId: ref.id });
+    } else if (event?.playingRequestId === ref.id) tx.update(eventRef, { playingRequestId: import_firestore2.FieldValue.delete() });
+    if (status === "played") {
+      patch.playedAt = now();
+      if (request.status !== "played") tx.update(db.collection("djs").doc(user.uid), { totalSongsPlayed: import_firestore2.FieldValue.increment(1) });
+    }
+    tx.update(ref, patch);
+    const history = db.collection("queue_history").doc();
+    tx.create(history, { id: history.id, requestId: ref.id, djId: user.uid, song: request.song, artist: request.artist, action: status, performer: user.uid, oldStatus: request.status, newStatus: status, createdAt: now() });
+  });
+  res.json({ success: true });
+}));
+firebaseRoutes.post("/requests/reorder", route(async (req, res) => {
+  const user = await identity(req);
+  if (!Array.isArray(req.body.orderedIds) || req.body.orderedIds.length > 450) throw new HttpError(400, "Invalid queue.");
+  const ids = [...new Set(req.body.orderedIds.map(documentId))];
+  const db = firestore();
+  await db.runTransaction(async (tx) => {
+    const refs = ids.map((id) => db.collection("song_requests").doc(id));
+    const docs = refs.length ? await tx.getAll(...refs) : [];
+    if (docs.some((d) => !d.exists || d.data()?.djId !== user.uid)) throw new HttpError(403, "You can only reorder your own requests.");
+    docs.forEach((d, i) => tx.update(d.ref, { queuePosition: i + 1 }));
+  });
+  res.json({ success: true });
+}));
+firebaseRoutes.patch("/notifications/:id/read", route(async (req, res) => {
+  const { ref } = await owned(req, "notifications", String(req.params.id));
+  await ref.update({ read: true });
+  res.json({ success: true });
+}));
+firebaseRoutes.post("/payments/initialize", route(async (req, res) => {
+  const db = firestore();
+  const requestId = documentId(req.body.requestId);
+  const request = (await db.collection("song_requests").doc(requestId).get()).data();
+  if (!request) throw new HttpError(404, "Song request not found.");
+  const event = (await db.collection("events").doc(request.eventId).get()).data();
+  const amountKobo = amountInKobo(req.body.amount);
+  if (!event?.tipsEnabled || amountKobo < event.minTip * 100 || amountKobo > event.maxTip * 100) throw new HttpError(400, "Tip is outside this event\u2019s allowed range.");
+  const email = text(req.body.customerEmail, "email", 254);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, "Enter a valid email address.");
+  const reference = `VYBE-${import_node_crypto.default.randomUUID()}`;
+  await db.collection("payments").doc(reference).create({ id: reference, reference, requestId, eventId: request.eventId, djId: request.djId, amount: amountKobo / 100, amountKobo, currency: "NGN", customerEmail: email, status: "pending", createdAt: now() });
+  const data = await paystack("/transaction/initialize", { email, amount: amountKobo, reference, currency: "NGN", metadata: { requestId, eventId: request.eventId, djId: request.djId } });
+  res.json({ success: true, reference, accessCode: data.access_code, authorizationUrl: data.authorization_url });
+}));
+async function settlePayment(verified, requestedId, db = firestore()) {
+  const ref = db.collection("payments").doc(documentId(verified.reference));
+  return db.runTransaction(async (tx) => {
+    const payment = (await tx.get(ref)).data();
+    if (!payment || requestedId && requestedId !== payment.requestId) throw new HttpError(400, "Checkout not found for this request.");
+    validateVerifiedPayment(payment, verified);
+    if (payment.status === "success") return payment.amount;
+    const requestRef = db.collection("song_requests").doc(payment.requestId);
+    const request = (await tx.get(requestRef)).data();
+    const djRef = db.collection("djs").doc(payment.djId);
+    const dj = (await tx.get(djRef)).data();
+    if (!request || !dj || request.djId !== payment.djId) throw new HttpError(400, "Checkout owner mismatch.");
+    tx.update(ref, { status: "success", paidAt: now() });
+    tx.update(requestRef, { tipAmount: import_firestore2.FieldValue.increment(payment.amount), priority: true, updatedAt: now() });
+    tx.update(djRef, { availableBalance: import_firestore2.FieldValue.increment(payment.amount), totalTipsEarned: import_firestore2.FieldValue.increment(payment.amount) });
+    const notification = db.collection("notifications").doc(`payment-${ref.id}`);
+    tx.set(notification, { id: notification.id, djId: payment.djId, type: "tip_confirmed", title: "Tip confirmed", message: `\u20A6${payment.amount} received for ${request.song}`, song: request.song, artist: request.artist, tipAmount: payment.amount, timestamp: now(), read: false });
+    return payment.amount;
+  });
+}
+firebaseRoutes.post("/payments/verify", route(async (req, res) => {
+  const reference = documentId(req.body.reference);
+  const verified = await paystack(`/transaction/verify/${encodeURIComponent(reference)}`);
+  const amount = await settlePayment(verified, documentId(req.body.requestId));
+  res.json({ success: true, verified: true, amount });
+}));
+async function settleTransfer(reference, status, db = firestore()) {
+  if (!["success", "failed", "reversed"].includes(status)) return;
+  const ref = db.collection("payouts").doc(documentId(reference));
+  await db.runTransaction(async (tx) => {
+    const payout = (await tx.get(ref)).data();
+    if (!payout || payout.status === "failed" || payout.status === "success" && status !== "reversed") return;
+    const djRef = db.collection("djs").doc(payout.djId);
+    const dj = (await tx.get(djRef)).data();
+    if (!dj) throw new HttpError(404, "Payout owner missing.");
+    const success = status === "success";
+    tx.update(ref, { status: success ? "success" : "failed", processedAt: now(), ...success ? {} : { failureReason: status } });
+    const cleared = dj.pendingPayoutReference === reference ? { pendingPayoutReference: import_firestore2.FieldValue.delete() } : {};
+    if (success) tx.update(djRef, { ...cleared, totalWithdrawn: import_firestore2.FieldValue.increment(payout.amount) });
+    else tx.update(djRef, { ...cleared, availableBalance: import_firestore2.FieldValue.increment(payout.amount), ...payout.status === "success" ? { totalWithdrawn: import_firestore2.FieldValue.increment(-payout.amount) } : {} });
+  });
+}
+firebaseRoutes.post("/payments/webhook", route(async (req, res) => {
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  const signature = req.headers["x-paystack-signature"];
+  const raw = req.rawBody;
+  if (!secret || typeof signature !== "string" || !/^[a-f0-9]{128}$/i.test(signature) || !raw) throw new HttpError(401, "Invalid webhook signature.");
+  const expected = import_node_crypto.default.createHmac("sha512", secret).update(raw).digest();
+  if (!import_node_crypto.default.timingSafeEqual(expected, Buffer.from(signature, "hex"))) throw new HttpError(401, "Invalid webhook signature.");
+  const { event, data } = req.body;
+  if (event === "charge.success") await settlePayment(data);
+  if (["transfer.success", "transfer.failed", "transfer.reversed"].includes(event)) await settleTransfer(data.reference, event.split(".")[1]);
+  res.json({ received: true });
+}));
+firebaseRoutes.get("/payout/banks", route(async (_req, res) => {
+  const data = await paystack("/bank?country=nigeria");
+  res.json({ success: true, banks: data.map((b) => ({ name: b.name, code: b.code, slug: b.slug })) });
+}));
+firebaseRoutes.post("/payout/resolve-account", route(async (req, res) => {
+  await identity(req);
+  const account = text(req.body.accountNumber, "account number", 10);
+  if (!/^\d{10}$/.test(account)) throw new HttpError(400, "Enter a 10-digit bank account number.");
+  const bank = text(req.body.bankCode, "bank code", 10);
+  const data = await paystack(`/bank/resolve?account_number=${encodeURIComponent(account)}&bank_code=${encodeURIComponent(bank)}`);
+  res.json({ success: true, accountName: data.account_name, accountNumber: data.account_number });
+}));
+firebaseRoutes.post("/payout/withdraw", route(async (req, res) => {
+  const user = await identity(req);
+  const amountKobo = amountInKobo(req.body.amount);
+  if (amountKobo < 1e5) throw new HttpError(400, "Minimum withdrawal is \u20A61,000.");
+  const accountNumber = text(req.body.accountNumber, "account number", 10);
+  if (!/^\d{10}$/.test(accountNumber)) throw new HttpError(400, "Enter a 10-digit account number.");
+  const bankCode = text(req.body.bankCode, "bank code", 10);
+  const bankName = text(req.body.bankName, "bank name");
+  const reference = documentId(req.body.reference);
+  if (!/^payout-[a-f0-9-]{36}$/.test(reference)) throw new HttpError(400, "Invalid payout reference.");
+  const db = firestore();
+  const ref = db.collection("payouts").doc(reference);
+  const djRef = db.collection("djs").doc(user.uid);
+  const result = await db.runTransaction(async (tx) => {
+    const existing = (await tx.get(ref)).data();
+    if (existing) {
+      if (existing.djId !== user.uid) throw new HttpError(403, "Invalid payout owner.");
+      return { existing: true, payout: existing };
+    }
+    const dj = (await tx.get(djRef)).data();
+    const amount = amountKobo / 100;
+    if (!dj || dj.availableBalance < amount) throw new HttpError(400, "Insufficient wallet balance.");
+    if (dj.pendingPayoutReference) throw new HttpError(409, "Your previous payout is awaiting confirmation. Check your payout history before withdrawing again.");
+    const payout2 = { id: reference, reference, djId: user.uid, amount, fee: 25, netAmount: amount - 25, currency: "NGN", bankCode, bankName, accountNumber, accountName: "", status: "processing", createdAt: now() };
+    tx.create(ref, payout2);
+    tx.update(djRef, { availableBalance: import_firestore2.FieldValue.increment(-amount), pendingPayoutReference: reference });
+    return { existing: false, payout: payout2 };
+  });
+  if (!result.existing) {
+    let transferAttempted = false;
     try {
-      buffer = import_fs.default.readFileSync(DB_FILE);
-    } catch (e) {
-      console.warn("Could not read existing database file, creating fresh one:", e);
+      const account = await paystack(`/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`);
+      const recipient = await paystack("/transferrecipient", { type: "nuban", name: account.account_name, account_number: accountNumber, bank_code: bankCode, currency: "NGN" });
+      await ref.update({ accountName: account.account_name, paystackRecipientCode: recipient.recipient_code });
+      transferAttempted = true;
+      const transfer = await paystack("/transfer", { source: "balance", amount: amountKobo - 2500, recipient: recipient.recipient_code, reference, reason: "VybeCheck DJ withdrawal" });
+      await ref.update({ paystackTransferCode: transfer.transfer_code });
+      await settleTransfer(reference, transfer.status);
+    } catch (error) {
+      if (!transferAttempted) await settleTransfer(reference, "failed");
+      else await ref.update({ failureReason: "Transfer awaiting provider confirmation. Do not retry with a new reference." });
+      if (!transferAttempted) throw error;
     }
   }
-  dbInstance = buffer ? new SQL.Database(buffer) : new SQL.Database();
-  initSchema(dbInstance);
-  saveDb();
-  return dbInstance;
-}
-function saveDb() {
-  if (!dbInstance) return;
-  try {
-    const data = dbInstance.export();
-    const buffer = Buffer.from(data);
-    import_fs.default.writeFileSync(DB_FILE, buffer);
-  } catch (err) {
-    console.error("Failed to save SQLite database to file:", err);
-  }
-}
-async function queryAll(sql, params = []) {
-  const db = await getDb();
-  const stmt = db.prepare(sql);
-  if (params && params.length > 0) {
-    stmt.bind(params);
-  }
-  const results = [];
-  while (stmt.step()) {
-    results.push(stmt.getAsObject());
-  }
-  stmt.free();
-  return results;
-}
-async function queryOne(sql, params = []) {
-  const rows = await queryAll(sql, params);
-  return rows.length > 0 ? rows[0] : null;
-}
-async function execute(sql, params = []) {
-  const db = await getDb();
-  db.run(sql, params);
-  saveDb();
-}
-function initSchema(db) {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS djs (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      stageName TEXT NOT NULL,
-      handle TEXT UNIQUE NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password TEXT,
-      bio TEXT,
-      avatarUrl TEXT,
-      coverUrl TEXT,
-      phone TEXT,
-      instagramHandle TEXT,
-      twitterHandle TEXT,
-      genres TEXT,
-      defaultVenue TEXT,
-      bankName TEXT,
-      accountNumber TEXT,
-      accountName TEXT,
-      bankCode TEXT,
-      paystackRecipientCode TEXT,
-      minTipAmount REAL DEFAULT 10000,
-      qrTheme TEXT DEFAULT 'cyber-cyan',
-      customQrTagline TEXT,
-      isVerified INTEGER DEFAULT 1,
-      availableBalance REAL DEFAULT 0,
-      totalWithdrawn REAL DEFAULT 0,
-      totalTipsEarned REAL DEFAULT 0,
-      totalRequestsReceived INTEGER DEFAULT 0,
-      totalSongsPlayed INTEGER DEFAULT 0,
-      createdAt TEXT NOT NULL
-    );
+  const payout = (await ref.get()).data();
+  const wallet = (await djRef.get()).data();
+  res.json({ success: true, payout, wallet: { availableBalance: wallet?.availableBalance, totalWithdrawn: wallet?.totalWithdrawn } });
+}));
+firebaseRoutes.get("/payout/history/:djId", route(async (req, res) => {
+  const user = await identity(req);
+  if (req.params.djId !== user.uid) throw new HttpError(403, "Not your wallet.");
+  const docs = await firestore().collection("payouts").where("djId", "==", user.uid).get();
+  res.json({ success: true, payouts: docs.docs.map((d) => d.data()).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
+}));
+firebaseRoutes.get("/firebase/status", route(async (_req, res) => {
+  await firestore().collection("events").limit(1).get();
+  res.json({ success: true, connected: true, database: "Cloud Firestore" });
+}));
+firebaseRoutes.use((err, _req, res, _next) => {
+  console.error("Firebase API:", err.message);
+  const failure = apiErrorResponse(err);
+  res.status(failure.status).json({ success: false, error: failure.message });
+});
 
-    CREATE TABLE IF NOT EXISTS payouts (
-      id TEXT PRIMARY KEY,
-      djId TEXT NOT NULL,
-      reference TEXT UNIQUE NOT NULL,
-      amount REAL NOT NULL,
-      fee REAL DEFAULT 0,
-      netAmount REAL NOT NULL,
-      currency TEXT DEFAULT 'NGN',
-      bankName TEXT NOT NULL,
-      accountNumber TEXT NOT NULL,
-      accountName TEXT NOT NULL,
-      bankCode TEXT,
-      paystackTransferCode TEXT,
-      status TEXT DEFAULT 'success',
-      failureReason TEXT,
-      createdAt TEXT NOT NULL,
-      processedAt TEXT,
-      FOREIGN KEY (djId) REFERENCES djs(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS events (
-      id TEXT PRIMARY KEY,
-      djId TEXT NOT NULL,
-      name TEXT NOT NULL,
-      slug TEXT UNIQUE NOT NULL,
-      description TEXT,
-      djName TEXT NOT NULL,
-      djEmail TEXT NOT NULL,
-      venue TEXT NOT NULL,
-      eventDate TEXT NOT NULL,
-      isActive INTEGER DEFAULT 1,
-      requestsEnabled INTEGER DEFAULT 1,
-      publicQueueEnabled INTEGER DEFAULT 1,
-      autoPriority INTEGER DEFAULT 1,
-      tipsEnabled INTEGER DEFAULT 1,
-      minTip REAL DEFAULT 10000,
-      maxTip REAL DEFAULT 1000000,
-      createdAt TEXT NOT NULL,
-      FOREIGN KEY (djId) REFERENCES djs(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS song_requests (
-      id TEXT PRIMARY KEY,
-      eventId TEXT NOT NULL,
-      djId TEXT NOT NULL,
-      song TEXT NOT NULL,
-      artist TEXT NOT NULL,
-      genre TEXT NOT NULL,
-      requesterName TEXT,
-      dedication TEXT,
-      tipAmount REAL DEFAULT 0,
-      priority INTEGER DEFAULT 0,
-      status TEXT DEFAULT 'pending',
-      queuePosition INTEGER DEFAULT 0,
-      trackingToken TEXT UNIQUE NOT NULL,
-      ipAddress TEXT,
-      artworkUrl TEXT,
-      previewUrl TEXT,
-      album TEXT,
-      identifiedViaAudio INTEGER DEFAULT 0,
-      audioConfidence REAL,
-      playingStartedAt TEXT,
-      playedAt TEXT,
-      createdAt TEXT NOT NULL,
-      updatedAt TEXT NOT NULL,
-      FOREIGN KEY (eventId) REFERENCES events(id),
-      FOREIGN KEY (djId) REFERENCES djs(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS payments (
-      id TEXT PRIMARY KEY,
-      requestId TEXT NOT NULL,
-      eventId TEXT NOT NULL,
-      reference TEXT UNIQUE NOT NULL,
-      amount REAL NOT NULL,
-      currency TEXT DEFAULT 'NGN',
-      status TEXT DEFAULT 'pending',
-      customerEmail TEXT,
-      createdAt TEXT NOT NULL,
-      paidAt TEXT,
-      FOREIGN KEY (requestId) REFERENCES song_requests(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS queue_history (
-      id TEXT PRIMARY KEY,
-      requestId TEXT NOT NULL,
-      song TEXT NOT NULL,
-      artist TEXT NOT NULL,
-      action TEXT NOT NULL,
-      performer TEXT NOT NULL,
-      oldStatus TEXT,
-      newStatus TEXT,
-      note TEXT,
-      createdAt TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS notifications (
-      id TEXT PRIMARY KEY,
-      djId TEXT NOT NULL,
-      type TEXT NOT NULL,
-      title TEXT NOT NULL,
-      message TEXT NOT NULL,
-      song TEXT,
-      artist TEXT,
-      tipAmount REAL,
-      timestamp TEXT NOT NULL,
-      read INTEGER DEFAULT 0,
-      FOREIGN KEY (djId) REFERENCES djs(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS magic_links (
-      token TEXT PRIMARY KEY,
-      code TEXT NOT NULL,
-      email TEXT NOT NULL,
-      djId TEXT,
-      createdAt TEXT NOT NULL,
-      expiresAt TEXT NOT NULL,
-      used INTEGER DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS email_logs (
-      id TEXT PRIMARY KEY,
-      toEmail TEXT NOT NULL,
-      subject TEXT NOT NULL,
-      type TEXT NOT NULL,
-      sentAt TEXT NOT NULL,
-      status TEXT NOT NULL
-    );
-  `);
-  try {
-    db.run("ALTER TABLE djs ADD COLUMN availableBalance REAL DEFAULT 0");
-  } catch (e) {
-  }
-  try {
-    db.run("ALTER TABLE djs ADD COLUMN totalWithdrawn REAL DEFAULT 0");
-  } catch (e) {
-  }
-  try {
-    db.run("ALTER TABLE djs ADD COLUMN bankCode TEXT");
-  } catch (e) {
-  }
-  try {
-    db.run("ALTER TABLE djs ADD COLUMN paystackRecipientCode TEXT");
-  } catch (e) {
-  }
-}
-
-// server/supabase.ts
-var import_supabase_js = require("@supabase/supabase-js");
-var supabaseInstance = null;
-function getSupabase() {
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-  if (!url || !key) {
-    return null;
-  }
-  if (!supabaseInstance) {
-    try {
-      supabaseInstance = (0, import_supabase_js.createClient)(url, key, {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false
-        }
-      });
-    } catch (err) {
-      console.error("Failed to initialize Supabase client:", err);
-      return null;
-    }
-  }
-  return supabaseInstance;
-}
-async function checkSupabaseHealth() {
-  const client = getSupabase();
-  if (!client) {
-    return {
-      connected: false,
-      error: "Supabase URL or Key not set in environment variables (SUPABASE_URL, SUPABASE_ANON_KEY)"
-    };
-  }
-  try {
-    const { data, error } = await client.from("djs").select("id").limit(1);
-    if (error) {
-      return {
-        connected: false,
-        url: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
-        error: error.message
-      };
-    }
-    return {
-      connected: true,
-      url: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
-      tables: ["djs", "events", "song_requests", "payments", "payouts", "notifications"]
-    };
-  } catch (err) {
-    return {
-      connected: false,
-      url: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
-      error: err.message || "Unknown network error communicating with Supabase"
-    };
-  }
-}
-
-// server.ts
-var app = (0, import_express.default)();
-var PORT = 3e3;
-app.use(import_express.default.json({ limit: "25mb" }));
-app.use(import_express.default.urlencoded({ extended: true, limit: "25mb" }));
+// server/app.ts
+var app = (0, import_express2.default)();
+app.use(import_express2.default.json({ limit: "25mb", verify: (req, _res, buffer) => {
+  req.rawBody = buffer;
+} }));
+app.use(import_express2.default.urlencoded({ extended: true, limit: "25mb" }));
+app.use("/api", firebaseRoutes);
 function mapGenre(rawGenre = "", song = "", artist = "") {
   const combined = `${rawGenre} ${song} ${artist}`.toLowerCase();
   if (combined.includes("amapiano") || combined.includes("kabza") || combined.includes("tyler icu") || combined.includes("kelvin momo") || combined.includes("young stunna") || combined.includes("focalistic") || combined.includes("musa keys") || combined.includes("txc") || combined.includes("tito m")) {
@@ -351,39 +533,6 @@ function mapGenre(rawGenre = "", song = "", artist = "") {
     return "Electronic";
   }
   return "Afrobeats";
-}
-function parseDJRow(row) {
-  if (!row) return null;
-  let genres = [];
-  try {
-    genres = typeof row.genres === "string" ? JSON.parse(row.genres) : row.genres || [];
-  } catch (e) {
-    genres = ["Afrobeats", "Amapiano"];
-  }
-  return {
-    ...row,
-    genres,
-    isVerified: Boolean(row.isVerified),
-    availableBalance: Number(row.availableBalance) || 0,
-    totalWithdrawn: Number(row.totalWithdrawn) || 0,
-    totalTipsEarned: Number(row.totalTipsEarned) || 0,
-    totalRequestsReceived: Number(row.totalRequestsReceived) || 0,
-    totalSongsPlayed: Number(row.totalSongsPlayed) || 0,
-    minTipAmount: Number(row.minTipAmount) || 1e4,
-    bankCode: row.bankCode || "058",
-    paystackRecipientCode: row.paystackRecipientCode || ""
-  };
-}
-function parseRequestRow(row) {
-  if (!row) return null;
-  return {
-    ...row,
-    priority: Boolean(row.priority),
-    identifiedViaAudio: Boolean(row.identifiedViaAudio),
-    tipAmount: Number(row.tipAmount) || 0,
-    queuePosition: Number(row.queuePosition) || 0,
-    audioConfidence: row.audioConfidence ? Number(row.audioConfidence) : void 0
-  };
 }
 app.get("/api/music/search", async (req, res) => {
   try {
@@ -465,7 +614,7 @@ app.post("/api/music/identify", async (req, res) => {
     const signatureVersion = "1";
     const dataType = "audio";
     const stringToSign = ["POST", "/v1/identify", accessKey, dataType, signatureVersion, timestamp].join("\n");
-    const signature = import_crypto.default.createHmac("sha1", accessSecret).update(Buffer.from(stringToSign, "utf-8")).digest("base64");
+    const signature = import_node_crypto2.default.createHmac("sha1", accessSecret).update(Buffer.from(stringToSign, "utf-8")).digest("base64");
     const formData = new FormData();
     formData.append("sample", new Blob([audioBuffer]), "sample.webm");
     formData.append("sample_bytes", audioBuffer.length.toString());
@@ -526,1258 +675,23 @@ app.post("/api/music/identify", async (req, res) => {
     return res.status(500).json({ success: false, error: "Internal server error processing audio." });
   }
 });
-app.get("/api/djs", async (req, res) => {
-  try {
-    const rows = await queryAll("SELECT * FROM djs ORDER BY createdAt ASC");
-    const djs = rows.map(parseDJRow);
-    return res.json({ success: true, djs });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.get("/api/djs/:handle", async (req, res) => {
-  try {
-    const param = req.params.handle.toLowerCase();
-    const row = await queryOne(
-      "SELECT * FROM djs WHERE LOWER(handle) = ? OR LOWER(email) = ? OR id = ?",
-      [param, param, param]
-    );
-    if (!row) {
-      return res.status(404).json({ success: false, error: "DJ not found" });
-    }
-    return res.json({ success: true, dj: parseDJRow(row) });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.post("/api/djs", async (req, res) => {
-  try {
-    const {
-      name,
-      stageName,
-      handle,
-      email,
-      password,
-      bio,
-      avatarUrl,
-      coverUrl,
-      phone,
-      instagramHandle,
-      twitterHandle,
-      genres,
-      defaultVenue,
-      bankName,
-      accountNumber,
-      accountName,
-      minTipAmount,
-      qrTheme,
-      customQrTagline
-    } = req.body;
-    if (!name || !stageName || !handle || !email) {
-      return res.status(400).json({ success: false, error: "Name, Stage Name, Handle, and Email are required." });
-    }
-    const cleanHandle = handle.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-    const cleanEmail = email.toLowerCase().trim();
-    const existing = await queryOne("SELECT id FROM djs WHERE LOWER(handle) = ? OR LOWER(email) = ?", [cleanHandle, cleanEmail]);
-    if (existing) {
-      return res.status(400).json({ success: false, error: "A DJ with this handle or email already exists." });
-    }
-    const id = `dj-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    await execute(
-      `INSERT INTO djs (
-        id, name, stageName, handle, email, password, bio, avatarUrl, coverUrl, phone, instagramHandle, twitterHandle, genres, defaultVenue, bankName, accountNumber, accountName, minTipAmount, qrTheme, customQrTagline, isVerified, totalTipsEarned, totalRequestsReceived, totalSongsPlayed, createdAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        name.trim(),
-        stageName.trim(),
-        cleanHandle,
-        cleanEmail,
-        password || "password123",
-        bio || `Official resident DJ at ${defaultVenue || "Top Venues"}.`,
-        avatarUrl || "https://images.unsplash.com/photo-1571266028243-3716f02d2d2e?w=600&auto=format&fit=crop&q=80",
-        coverUrl || "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=1200&auto=format&fit=crop&q=80",
-        phone || "",
-        instagramHandle || "",
-        twitterHandle || "",
-        JSON.stringify(genres || ["Afrobeats", "Amapiano"]),
-        defaultVenue || "Club VIP Lounge",
-        bankName || "Guaranty Trust Bank (GTBank)",
-        accountNumber || "",
-        accountName || name.trim(),
-        Number(minTipAmount) || 1e4,
-        qrTheme || "cyber-cyan",
-        customQrTagline || `SCAN TO REQUEST & VIP TIP ${stageName.toUpperCase()}`,
-        1,
-        0,
-        0,
-        0,
-        now
-      ]
-    );
-    const eventId = `evt-${Date.now().toString(36)}`;
-    await execute(
-      `INSERT INTO events (
-        id, djId, name, slug, description, djName, djEmail, venue, eventDate, isActive, requestsEnabled, publicQueueEnabled, autoPriority, tipsEnabled, minTip, maxTip, createdAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        eventId,
-        id,
-        `Live Vybe Check with ${stageName}`,
-        `live-${cleanHandle}`,
-        `Live DJ Request & VIP Tipping Portal for ${stageName}. Send requests directly to the booth.`,
-        stageName,
-        cleanEmail,
-        defaultVenue || "Club VIP Lounge",
-        now,
-        1,
-        1,
-        1,
-        1,
-        1,
-        Number(minTipAmount) || 1e4,
-        1e6,
-        now
-      ]
-    );
-    const created = await queryOne("SELECT * FROM djs WHERE id = ?", [id]);
-    return res.json({ success: true, dj: parseDJRow(created) });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.put("/api/djs/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const dj = await queryOne("SELECT * FROM djs WHERE id = ?", [id]);
-    if (!dj) {
-      return res.status(404).json({ success: false, error: "DJ not found" });
-    }
-    const updates = req.body;
-    await execute(
-      `UPDATE djs SET
-        stageName = COALESCE(?, stageName),
-        handle = COALESCE(?, handle),
-        bio = COALESCE(?, bio),
-        avatarUrl = COALESCE(?, avatarUrl),
-        coverUrl = COALESCE(?, coverUrl),
-        phone = COALESCE(?, phone),
-        instagramHandle = COALESCE(?, instagramHandle),
-        twitterHandle = COALESCE(?, twitterHandle),
-        genres = COALESCE(?, genres),
-        defaultVenue = COALESCE(?, defaultVenue),
-        bankName = COALESCE(?, bankName),
-        accountNumber = COALESCE(?, accountNumber),
-        accountName = COALESCE(?, accountName),
-        minTipAmount = COALESCE(?, minTipAmount),
-        qrTheme = COALESCE(?, qrTheme),
-        customQrTagline = COALESCE(?, customQrTagline)
-      WHERE id = ?`,
-      [
-        updates.stageName,
-        updates.handle ? updates.handle.toLowerCase().replace(/[^a-z0-9_-]/g, "") : null,
-        updates.bio,
-        updates.avatarUrl,
-        updates.coverUrl,
-        updates.phone,
-        updates.instagramHandle,
-        updates.twitterHandle,
-        updates.genres ? JSON.stringify(updates.genres) : null,
-        updates.defaultVenue,
-        updates.bankName,
-        updates.accountNumber,
-        updates.accountName,
-        updates.minTipAmount !== void 0 ? Number(updates.minTipAmount) : null,
-        updates.qrTheme,
-        updates.customQrTagline,
-        id
-      ]
-    );
-    const updated = await queryOne("SELECT * FROM djs WHERE id = ?", [id]);
-    return res.json({ success: true, dj: parseDJRow(updated) });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.post("/api/auth/magic-link", async (req, res) => {
-  try {
-    const { email, redirectUrl } = req.body;
-    if (!email || !email.includes("@")) {
-      return res.status(400).json({ success: false, error: "A valid email address is required." });
-    }
-    const cleanEmail = email.trim().toLowerCase();
-    const dj = await queryOne("SELECT * FROM djs WHERE LOWER(email) = ? OR LOWER(handle) = ?", [cleanEmail, cleanEmail]);
-    const djId = dj ? dj.id : null;
-    const djStageName = dj ? dj.stageName : "Resident DJ";
-    const token = `ml_${Math.random().toString(36).substring(2)}${Date.now().toString(36)}`;
-    const code = Math.floor(1e5 + Math.random() * 9e5).toString();
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1e3).toISOString();
-    await execute(
-      "INSERT INTO magic_links (token, code, email, djId, createdAt, expiresAt, used) VALUES (?, ?, ?, ?, ?, ?, 0)",
-      [token, code, cleanEmail, djId, now, expiresAt]
-    );
-    const targetBase = redirectUrl || req.headers.origin || "http://localhost:3000";
-    const magicLink = `${targetBase}/#magic-login?token=${token}&email=${encodeURIComponent(cleanEmail)}`;
-    const emailSubject = `\u{1F3B5} Your VybeCheck DJ Magic Sign-In Link`;
-    const htmlBody = `
-      <!DOCTYPE html>
-      <html>
-      <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-      <body style="margin: 0; padding: 0; background-color: #070314; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #f8fafc;">
-        <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; margin: 40px auto; background: #0f0726; border: 1px solid #3b0764; border-radius: 24px; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.8);">
-          <tr>
-            <td style="padding: 36px 32px; text-align: center; background: linear-gradient(180deg, #1e0842 0%, #0f0726 100%);">
-              <div style="display: inline-block; padding: 6px 14px; background: rgba(0, 240, 255, 0.1); border: 1px solid #00f0ff; border-radius: 999px; color: #00f0ff; font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 14px;">
-                DJ BOOTH SECURE ACCESS
-              </div>
-              <h1 style="margin: 0 0 8px; font-size: 26px; font-weight: 900; color: #ffffff;">VYBECHECK WITH BAMA</h1>
-              <p style="margin: 0; font-size: 14px; color: #c084fc;">Passwordless Sign-In for ${djStageName}</p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding: 32px;">
-              <p style="margin: 0 0 20px; font-size: 15px; color: #cbd5e1;">Hello <strong>${djStageName}</strong>,</p>
-              <p style="margin: 0 0 24px; font-size: 14px; color: #94a3b8; line-height: 1.6;">
-                Click the secure button below to sign into your DJ Booth, view live requests, and access your tailored crowd QR flyer:
-              </p>
-              <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 24px 0;">
-                <tr>
-                  <td align="center">
-                    <a href="${magicLink}" target="_blank" style="display: inline-block; padding: 16px 36px; background: linear-gradient(90deg, #a855f7 0%, #6366f1 50%, #06b6d4 100%); color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 800; border-radius: 14px; text-transform: uppercase;">
-                      \u26A1 Sign In to DJ Booth
-                    </a>
-                  </td>
-                </tr>
-              </table>
-              <div style="background: #080410; border: 1px dashed #7e22ce; border-radius: 16px; padding: 18px; text-align: center; margin: 24px 0 16px;">
-                <p style="margin: 0 0 6px; font-size: 11px; color: #94a3b8; font-weight: 700; text-transform: uppercase;">
-                  Or enter your 6-digit confirmation code:
-                </p>
-                <div style="font-size: 28px; font-family: monospace; font-weight: 900; color: #22d3ee; letter-spacing: 6px;">
-                  ${code}
-                </div>
-              </div>
-              <p style="margin: 20px 0 0; font-size: 12px; color: #64748b; text-align: center;">
-                \u23F1\uFE0F This magic link expires in 15 minutes.
-              </p>
-            </td>
-          </tr>
-        </table>
-      </body>
-      </html>
-    `;
-    let resendStatus = "logged";
-    if (process.env.RESEND_API_KEY) {
-      try {
-        const fromEmail = process.env.EMAIL_FROM || "VybeCheck Live <onboarding@resend.dev>";
-        const emailRes = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${process.env.RESEND_API_KEY}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            from: fromEmail,
-            to: [cleanEmail],
-            subject: emailSubject,
-            html: htmlBody
-          })
-        });
-        if (emailRes.ok) {
-          resendStatus = "sent";
-        }
-      } catch (err) {
-        console.warn("Resend send failed:", err.message);
-      }
-    }
-    const logId = `eml-${Date.now().toString(36)}`;
-    await execute(
-      "INSERT INTO email_logs (id, toEmail, subject, type, sentAt, status) VALUES (?, ?, ?, ?, ?, ?)",
-      [logId, cleanEmail, emailSubject, "magic_link", now, resendStatus]
-    );
-    return res.json({
-      success: true,
-      email: cleanEmail,
-      message: `A secure magic sign-in link and confirmation code have been dispatched to ${cleanEmail}. Check your email inbox.`
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.post("/api/auth/verify-magic-link", async (req, res) => {
-  try {
-    const { token, code, email } = req.body;
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    let record = null;
-    if (token) {
-      record = await queryOne(
-        "SELECT * FROM magic_links WHERE token = ? AND used = 0 AND expiresAt > ?",
-        [token.trim(), now]
-      );
-    } else if (code) {
-      record = await queryOne(
-        "SELECT * FROM magic_links WHERE code = ? AND used = 0 AND expiresAt > ?",
-        [code.trim(), now]
-      );
-    }
-    if (!record) {
-      return res.status(400).json({ success: false, error: "Invalid or expired confirmation code / magic link." });
-    }
-    await execute("UPDATE magic_links SET used = 1 WHERE token = ?", [record.token]);
-    let dj = null;
-    if (record.djId) {
-      dj = await queryOne("SELECT * FROM djs WHERE id = ?", [record.djId]);
-    }
-    if (!dj && record.email) {
-      dj = await queryOne("SELECT * FROM djs WHERE LOWER(email) = ?", [record.email.toLowerCase()]);
-    }
-    if (!dj) {
-      dj = await queryOne("SELECT * FROM djs LIMIT 1");
-    }
-    return res.json({
-      success: true,
-      dj: parseDJRow(dj),
-      message: "Authentication successful"
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.post("/api/auth/login-demo", async (req, res) => {
-  try {
-    const { handle } = req.body;
-    const dj = await queryOne("SELECT * FROM djs WHERE LOWER(handle) = ? OR id = ?", [handle.toLowerCase(), handle]);
-    if (!dj) {
-      return res.status(404).json({ success: false, error: "DJ not found" });
-    }
-    return res.json({ success: true, dj: parseDJRow(dj) });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.post("/api/auth/login-password", async (req, res) => {
-  try {
-    const { emailOrHandle, password } = req.body;
-    if (!emailOrHandle || !password) {
-      return res.status(400).json({ success: false, error: "Email/Handle and password are required." });
-    }
-    const clean = emailOrHandle.trim().toLowerCase();
-    const dj = await queryOne(
-      "SELECT * FROM djs WHERE LOWER(email) = ? OR LOWER(handle) = ?",
-      [clean, clean]
-    );
-    if (!dj) {
-      return res.status(401).json({ success: false, error: "DJ account not found with that email or handle." });
-    }
-    if (dj.password && dj.password !== "social_auth_secured" && dj.password !== password && password !== "password123") {
-      return res.status(401).json({ success: false, error: "Incorrect password." });
-    }
-    return res.json({
-      success: true,
-      dj: parseDJRow(dj),
-      message: "Signed in successfully"
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.post("/api/auth/send-welcome", async (req, res) => {
-  try {
-    const { email, stageName, handle, venue, requestUrl } = req.body;
-    if (!email) {
-      return res.status(400).json({ success: false, error: "Email is required" });
-    }
-    const cleanEmail = email.trim().toLowerCase();
-    const emailSubject = `\u{1F389} Welcome to VybeCheck, ${stageName}! Your DJ Request Portal is Live`;
-    const htmlBody = `
-      <!DOCTYPE html>
-      <html>
-      <body style="margin: 0; padding: 0; background-color: #070314; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #f8fafc;">
-        <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; margin: 40px auto; background: #0f0726; border: 1px solid #3b0764; border-radius: 24px; padding: 32px;">
-          <tr>
-            <td style="text-align: center;">
-              <h1 style="margin: 0 0 10px; font-size: 26px; color: #00f0ff; font-weight: 900;">WELCOME TO THE BOOTH</h1>
-              <p style="margin: 0 0 24px; font-size: 16px; color: #c084fc;">Your personal crowd request portal is live!</p>
-              <div style="background: #080410; border: 1px solid #00f0ff; border-radius: 16px; padding: 20px; text-align: left; margin-bottom: 24px;">
-                <p style="margin: 0 0 8px; font-size: 13px; color: #94a3b8;"><strong>DJ:</strong> <span style="color: #ffffff;">${stageName}</span></p>
-                <p style="margin: 0 0 8px; font-size: 13px; color: #94a3b8;"><strong>Handle:</strong> <span style="color: #22d3ee;">@${handle}</span></p>
-                <p style="margin: 0 0 8px; font-size: 13px; color: #94a3b8;"><strong>Venue:</strong> <span style="color: #ffffff;">${venue || "Live VIP Club"}</span></p>
-                <p style="margin: 0; font-size: 13px; color: #94a3b8;"><strong>Request Link:</strong> <a href="${requestUrl}" style="color: #facc15;">${requestUrl}</a></p>
-              </div>
-            </td>
-          </tr>
-        </table>
-      </body>
-      </html>
-    `;
-    if (process.env.RESEND_API_KEY) {
-      try {
-        await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${process.env.RESEND_API_KEY}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            from: process.env.EMAIL_FROM || "VybeCheck Live <onboarding@resend.dev>",
-            to: [cleanEmail],
-            subject: emailSubject,
-            html: htmlBody
-          })
-        });
-      } catch (e) {
-      }
-    }
-    const logId = `eml-${Date.now().toString(36)}`;
-    await execute(
-      "INSERT INTO email_logs (id, toEmail, subject, type, sentAt, status) VALUES (?, ?, ?, ?, ?, ?)",
-      [logId, cleanEmail, emailSubject, "welcome", (/* @__PURE__ */ new Date()).toISOString(), "sent"]
-    );
-    return res.json({ success: true, email: cleanEmail });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.get("/api/supabase/status", async (req, res) => {
-  const health = await checkSupabaseHealth();
-  return res.json(health);
-});
-app.post("/api/auth/social-login", async (req, res) => {
-  try {
-    const { provider, email: customEmail, name: customName, stageName: customStageName, handle: customHandle, avatarUrl: customAvatar } = req.body;
-    if (!provider) {
-      return res.status(400).json({ success: false, error: "Provider is required" });
-    }
-    const cleanEmail = (customEmail || "").toLowerCase().trim();
-    let dj = null;
-    if (cleanEmail) {
-      dj = await queryOne("SELECT * FROM djs WHERE LOWER(email) = ?", [cleanEmail]);
-    }
-    if (!dj) {
-      const emailPrefix = cleanEmail ? cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9]/g, " ").trim() : "";
-      const formattedPrefix = emailPrefix ? emailPrefix.split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") : "";
-      const realName = customName || (formattedPrefix ? `${formattedPrefix}` : "Resident DJ Pro");
-      const stageName = customStageName || (customName ? customName.toLowerCase().startsWith("dj ") ? customName : `DJ ${customName}` : formattedPrefix ? `DJ ${formattedPrefix}` : "DJ Bama Resident");
-      const cleanHandle = (customHandle || (emailPrefix ? emailPrefix.toLowerCase().replace(/\s+/g, "_") : `dj_${provider.toLowerCase()}_${Math.random().toString(36).substring(2, 6)}`)).toLowerCase();
-      const finalEmail = cleanEmail || `${cleanHandle}@vybecheck.live`;
-      const id = `dj-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 5)}`;
-      const now = (/* @__PURE__ */ new Date()).toISOString();
-      const avatar = customAvatar || (provider === "spotify" ? "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80" : "https://images.unsplash.com/photo-1571266028243-3716f02d2d2e?w=600&auto=format&fit=crop&q=80");
-      await execute(
-        `INSERT INTO djs (
-          id, name, stageName, handle, email, password, bio, avatarUrl, coverUrl, phone, instagramHandle, twitterHandle, genres, defaultVenue, bankName, accountNumber, accountName, minTipAmount, qrTheme, customQrTagline, isVerified, availableBalance, totalWithdrawn, totalTipsEarned, totalRequestsReceived, totalSongsPlayed, createdAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          realName,
-          stageName,
-          cleanHandle,
-          finalEmail,
-          "social_auth_secured",
-          `Verified ${provider.toUpperCase()} Connected DJ. Live club curator on VybeCheck.`,
-          avatar,
-          "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=1200&auto=format&fit=crop&q=80",
-          "+234 800 000 0000",
-          `@${cleanHandle}`,
-          `@${cleanHandle}`,
-          JSON.stringify(["Afrobeats", "Amapiano", "3 STEP SA", "Afro House"]),
-          "Club Matrix VIP Lounge, Lagos",
-          "Guaranty Trust Bank (GTBank)",
-          "0124892019",
-          stageName,
-          1e4,
-          "cyber-cyan",
-          `SCAN TO REQUEST & VIP TIP ${stageName.toUpperCase()}`,
-          1,
-          75e3,
-          0,
-          75e3,
-          0,
-          0,
-          now
-        ]
-      );
-      const eventId = `evt-${Date.now().toString(36)}`;
-      await execute(
-        `INSERT INTO events (
-          id, djId, name, slug, description, djName, djEmail, venue, eventDate, isActive, requestsEnabled, publicQueueEnabled, autoPriority, tipsEnabled, minTip, maxTip, createdAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          eventId,
-          id,
-          `Live Vybe Check with ${stageName}`,
-          `live-${cleanHandle}`,
-          `Live DJ Request & VIP Tipping Portal for ${stageName}. Send requests directly to the booth.`,
-          stageName,
-          finalEmail,
-          "Club Matrix VIP Lounge, Lagos",
-          now,
-          1,
-          1,
-          1,
-          1,
-          1,
-          1e4,
-          1e6,
-          now
-        ]
-      );
-      dj = await queryOne("SELECT * FROM djs WHERE id = ?", [id]);
-    }
-    return res.json({
-      success: true,
-      dj: parseDJRow(dj),
-      user: parseDJRow(dj),
-      provider,
-      message: `Signed in successfully via ${provider}`
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.get("/api/events", async (req, res) => {
-  try {
-    const events = await queryAll("SELECT * FROM events ORDER BY createdAt DESC");
-    return res.json({
-      success: true,
-      events: events.map((e) => ({
-        ...e,
-        isActive: Boolean(e.isActive),
-        requestsEnabled: Boolean(e.requestsEnabled),
-        publicQueueEnabled: Boolean(e.publicQueueEnabled),
-        autoPriority: Boolean(e.autoPriority),
-        tipsEnabled: Boolean(e.tipsEnabled),
-        minTip: Number(e.minTip) || 1e4,
-        maxTip: Number(e.maxTip) || 1e6
-      }))
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.get("/api/events/dj/:djId", async (req, res) => {
-  try {
-    const events = await queryAll("SELECT * FROM events WHERE djId = ? ORDER BY createdAt DESC", [req.params.djId]);
-    return res.json({ success: true, events });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.get("/api/requests", async (req, res) => {
-  try {
-    const { djId, eventId } = req.query;
-    let rows = [];
-    if (djId) {
-      rows = await queryAll("SELECT * FROM song_requests WHERE djId = ? ORDER BY priority DESC, queuePosition ASC, createdAt ASC", [djId]);
-    } else if (eventId) {
-      rows = await queryAll("SELECT * FROM song_requests WHERE eventId = ? ORDER BY priority DESC, queuePosition ASC, createdAt ASC", [eventId]);
-    } else {
-      rows = await queryAll("SELECT * FROM song_requests ORDER BY priority DESC, queuePosition ASC, createdAt ASC");
-    }
-    return res.json({ success: true, requests: rows.map(parseRequestRow) });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.get("/api/requests/track/:token", async (req, res) => {
-  try {
-    const row = await queryOne("SELECT * FROM song_requests WHERE trackingToken = ?", [req.params.token.trim()]);
-    if (!row) {
-      return res.status(404).json({ success: false, error: "Song request not found" });
-    }
-    return res.json({ success: true, request: parseRequestRow(row) });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.post("/api/requests", async (req, res) => {
-  try {
-    const {
-      eventId,
-      djId,
-      song,
-      artist,
-      genre,
-      requesterName,
-      dedication,
-      tipAmount,
-      priority,
-      artworkUrl,
-      previewUrl,
-      album,
-      identifiedViaAudio,
-      audioConfidence
-    } = req.body;
-    if (!song || !artist) {
-      return res.status(400).json({ success: false, error: "Song and artist are required." });
-    }
-    const targetDjId = djId || "dj-bama";
-    const targetEventId = eventId || "evt-live-001";
-    const isPriority = Boolean(priority) || Number(tipAmount) > 0;
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    const id = `req-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
-    const randomSuffix = Math.floor(1e3 + Math.random() * 9e3);
-    const trackingToken = `TRK-${song.toUpperCase().replace(/[^A-Z0-9]/g, "").substring(0, 8)}-${randomSuffix}`;
-    const countRow = await queryOne(
-      "SELECT COUNT(*) as cnt FROM song_requests WHERE djId = ? AND status IN ('pending', 'up_next')",
-      [targetDjId]
-    );
-    const queuePosition = (countRow?.cnt || 0) + 1;
-    await execute(
-      `INSERT INTO song_requests (
-        id, eventId, djId, song, artist, genre, requesterName, dedication, tipAmount, priority, status, queuePosition, trackingToken, artworkUrl, previewUrl, album, identifiedViaAudio, audioConfidence, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        targetEventId,
-        targetDjId,
-        song.trim(),
-        artist.trim(),
-        genre || "Afrobeats",
-        requesterName?.trim() || "Club VIP Guest",
-        dedication?.trim() || "",
-        Number(tipAmount) || 0,
-        isPriority ? 1 : 0,
-        "pending",
-        queuePosition,
-        trackingToken,
-        artworkUrl || "",
-        previewUrl || "",
-        album || "",
-        identifiedViaAudio ? 1 : 0,
-        audioConfidence ? Number(audioConfidence) : null,
-        now,
-        now
-      ]
-    );
-    await execute("UPDATE djs SET totalRequestsReceived = totalRequestsReceived + 1 WHERE id = ?", [targetDjId]);
-    const historyId = `hist-${Date.now().toString(36)}`;
-    await execute(
-      "INSERT INTO queue_history (id, requestId, song, artist, action, performer, newStatus, note, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [
-        historyId,
-        id,
-        song.trim(),
-        artist.trim(),
-        "created",
-        requesterName?.trim() || "Club VIP Guest",
-        "pending",
-        isPriority ? `VIP Request with \u20A6${Number(tipAmount).toLocaleString()} tip` : "Standard request",
-        now
-      ]
-    );
-    const notifId = `notif-${Date.now().toString(36)}`;
-    await execute(
-      "INSERT INTO notifications (id, djId, type, title, message, song, artist, tipAmount, timestamp, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-      [
-        notifId,
-        targetDjId,
-        isPriority ? "vip_request" : "new_request",
-        isPriority ? "\u26A1 VIP Priority Request!" : "New Song Request",
-        `${requesterName || "Guest"} requested "${song}" by ${artist}${isPriority ? ` with \u20A6${Number(tipAmount).toLocaleString()} tip` : ""}`,
-        song,
-        artist,
-        Number(tipAmount) || 0,
-        now
-      ]
-    );
-    const created = await queryOne("SELECT * FROM song_requests WHERE id = ?", [id]);
-    return res.json({ success: true, request: parseRequestRow(created) });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.patch("/api/requests/:id/status", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status, performer } = req.body;
-    const request = await queryOne("SELECT * FROM song_requests WHERE id = ?", [id]);
-    if (!request) {
-      return res.status(404).json({ success: false, error: "Request not found" });
-    }
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    const oldStatus = request.status;
-    let playingStartedAt = request.playingStartedAt;
-    let playedAt = request.playedAt;
-    if (status === "playing") {
-      playingStartedAt = now;
-    } else if (status === "played") {
-      playedAt = now;
-      await execute("UPDATE djs SET totalSongsPlayed = totalSongsPlayed + 1 WHERE id = ?", [request.djId]);
-    }
-    await execute(
-      "UPDATE song_requests SET status = ?, playingStartedAt = ?, playedAt = ?, updatedAt = ? WHERE id = ?",
-      [status, playingStartedAt, playedAt, now, id]
-    );
-    const histId = `hist-${Date.now().toString(36)}`;
-    await execute(
-      "INSERT INTO queue_history (id, requestId, song, artist, action, performer, oldStatus, newStatus, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [histId, id, request.song, request.artist, status, performer || "DJ Bama", oldStatus, status, now]
-    );
-    const updated = await queryOne("SELECT * FROM song_requests WHERE id = ?", [id]);
-    return res.json({ success: true, request: parseRequestRow(updated) });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.post("/api/requests/reorder", async (req, res) => {
-  try {
-    const { orderedIds } = req.body;
-    if (Array.isArray(orderedIds)) {
-      for (let i = 0; i < orderedIds.length; i++) {
-        await execute("UPDATE song_requests SET queuePosition = ? WHERE id = ?", [i + 1, orderedIds[i]]);
-      }
-    }
-    return res.json({ success: true });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-var NIGERIAN_BANKS = [
-  { name: "Guaranty Trust Bank (GTBank)", code: "058", slug: "gtb" },
-  { name: "Access Bank", code: "044", slug: "access-bank" },
-  { name: "Zenith Bank", code: "057", slug: "zenith-bank" },
-  { name: "First Bank of Nigeria", code: "011", slug: "first-bank-of-nigeria" },
-  { name: "United Bank for Africa (UBA)", code: "033", slug: "uba" },
-  { name: "Kuda Microfinance Bank", code: "50211", slug: "kuda-bank" },
-  { name: "OPay Digital Services", code: "999992", slug: "opay" },
-  { name: "PalmPay", code: "999991", slug: "palmpay" },
-  { name: "Moniepoint Microfinance Bank", code: "50515", slug: "moniepoint-mfb" },
-  { name: "Wema Bank (ALAT)", code: "035", slug: "wema-bank" },
-  { name: "Stanbic IBTC Bank", code: "221", slug: "stanbic-ibtc-bank" },
-  { name: "Sterling Bank", code: "232", slug: "sterling-bank" },
-  { name: "Fidelity Bank", code: "070", slug: "fidelity-bank" },
-  { name: "FCMB (First City Monument Bank)", code: "214", slug: "first-city-monument-bank" },
-  { name: "Polaris Bank", code: "076", slug: "polaris-bank" },
-  { name: "Union Bank of Nigeria", code: "032", slug: "union-bank-of-nigeria" },
-  { name: "Ecobank Nigeria", code: "050", slug: "ecobank-nigeria" },
-  { name: "Providus Bank", code: "101", slug: "providus-bank" },
-  { name: "VFD Microfinance Bank", code: "566", slug: "vfd" },
-  { name: "Jaiz Bank", code: "301", slug: "jaiz-bank" },
-  { name: "Taj Bank", code: "302", slug: "taj-bank" },
-  { name: "Titan Trust Bank", code: "102", slug: "titan-trust-bank" },
-  { name: "Rubies Bank", code: "125", slug: "rubies-bank" }
-];
-app.post("/api/payments/initialize", async (req, res) => {
-  try {
-    const { requestId, eventId, amount, customerEmail, djId } = req.body;
-    const ref = `VYBE-${Date.now()}-${Math.floor(1e3 + Math.random() * 9e3)}`;
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    const cloudDb = getSupabase();
-    if (cloudDb) {
-      const { error } = await cloudDb.from("payments").insert({
-        id: import_crypto.default.randomUUID(),
-        request_id: requestId,
-        event_id: eventId,
-        reference: ref,
-        amount: Number(amount),
-        currency: "NGN",
-        status: "pending",
-        customer_email: customerEmail || null
-      });
-      if (error) return res.status(400).json({ success: false, error: error.message });
-      const paystackRes = await fetch("https://api.paystack.co/transaction/initialize", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${process.env.PAYSTACK_SECRET_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: customerEmail,
-          amount: Math.round(Number(amount) * 100),
-          reference: ref,
-          currency: "NGN",
-          metadata: { requestId, eventId, djId, platform: "VybeCheck Live" }
-        })
-      });
-      const paystackData = await paystackRes.json();
-      if (!paystackRes.ok || !paystackData.status) return res.status(502).json({ success: false, error: paystackData.message || "Paystack initialization failed." });
-      return res.json({ success: true, reference: ref, amount: Number(amount), authorizationUrl: paystackData.data.authorization_url, accessCode: paystackData.data.access_code, publicKey: process.env.PAYSTACK_PUBLIC_KEY });
-    }
-    const id = `pay-${Date.now().toString(36)}`;
-    await execute(
-      "INSERT INTO payments (id, requestId, eventId, reference, amount, currency, status, customerEmail, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [id, requestId, eventId || "evt-live-001", ref, Number(amount), "NGN", "pending", customerEmail || "guest@club.com", now]
-    );
-    let authorizationUrl = null;
-    let accessCode = null;
-    if (process.env.PAYSTACK_SECRET_KEY && !process.env.PAYSTACK_SECRET_KEY.includes("example")) {
-      try {
-        const paystackRes = await fetch("https://api.paystack.co/transaction/initialize", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            email: customerEmail || "guest@club.com",
-            amount: Math.round(Number(amount) * 100),
-            // amount in Kobo
-            reference: ref,
-            currency: "NGN",
-            metadata: {
-              requestId,
-              eventId: eventId || "evt-live-001",
-              djId: djId || "dj-bama",
-              platform: "VybeCheck Live"
-            }
-          })
-        });
-        if (paystackRes.ok) {
-          const paystackData = await paystackRes.json();
-          if (paystackData.status && paystackData.data) {
-            authorizationUrl = paystackData.data.authorization_url;
-            accessCode = paystackData.data.access_code;
-          }
-        }
-      } catch (paystackErr) {
-        console.warn("Paystack live initialization notice:", paystackErr.message);
-      }
-    }
-    return res.json({
-      success: true,
-      reference: ref,
-      amount: Number(amount),
-      authorizationUrl,
-      accessCode,
-      publicKey: process.env.PAYSTACK_PUBLIC_KEY || "pk_test_vybecheck_live_public"
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.post("/api/payments/verify", async (req, res) => {
-  try {
-    const { reference, requestId, tipAmount } = req.body;
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    let verifiedAmount = Number(tipAmount) || 0;
-    const cloudDb = getSupabase();
-    if (cloudDb) {
-      if (!process.env.PAYSTACK_SECRET_KEY) return res.status(500).json({ success: false, error: "Paystack secret key is not configured." });
-      const paystackRes = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
-        headers: { "Authorization": `Bearer ${process.env.PAYSTACK_SECRET_KEY}`, "Content-Type": "application/json" }
-      });
-      const paystackData = await paystackRes.json();
-      if (!paystackRes.ok || !paystackData.status || paystackData.data?.status !== "success") return res.status(400).json({ success: false, error: "Payment has not been verified by Paystack." });
-      verifiedAmount = Math.round(paystackData.data.amount / 100);
-      const { data: requestRow, error: requestError } = await cloudDb.from("song_requests").select("*").eq("id", requestId).single();
-      if (requestError || !requestRow) return res.status(404).json({ success: false, error: "Request not found." });
-      const { error: paymentError } = await cloudDb.from("payments").update({ status: "success", paid_at: now, paystack_response: paystackData }).eq("reference", reference);
-      if (paymentError) return res.status(400).json({ success: false, error: paymentError.message });
-      const newTip = Number(requestRow.tip_amount || 0) + verifiedAmount;
-      await cloudDb.from("song_requests").update({ tip_amount: newTip, priority: true, updated_at: now }).eq("id", requestId);
-      const { data: dj } = await cloudDb.from("djs").select("total_tips_earned, available_balance").eq("id", requestRow.dj_id).single();
-      if (dj) await cloudDb.from("djs").update({ total_tips_earned: Number(dj.total_tips_earned || 0) + verifiedAmount, available_balance: Number(dj.available_balance || 0) + verifiedAmount }).eq("id", requestRow.dj_id);
-      await cloudDb.from("notifications").insert({ id: import_crypto.default.randomUUID(), dj_id: requestRow.dj_id, type: "tip_confirmed", title: "VIP Tip Confirmed via Paystack", message: `\u20A6${verifiedAmount.toLocaleString()} tip received for "${requestRow.song}" by ${requestRow.artist}`, song: requestRow.song, artist: requestRow.artist, tip_amount: verifiedAmount });
-      return res.json({ success: true, verified: true, amount: verifiedAmount });
-    }
-    if (process.env.PAYSTACK_SECRET_KEY && !process.env.PAYSTACK_SECRET_KEY.includes("example")) {
-      try {
-        const paystackRes = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
-          headers: {
-            "Authorization": `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-            "Content-Type": "application/json"
-          }
-        });
-        if (paystackRes.ok) {
-          const paystackData = await paystackRes.json();
-          if (paystackData.status && paystackData.data?.status === "success") {
-            verifiedAmount = Math.round(paystackData.data.amount / 100);
-          }
-        }
-      } catch (err) {
-        console.warn("Paystack live verification fallback to internal verification:", err.message);
-      }
-    }
-    await execute("UPDATE payments SET status = ?, paidAt = ? WHERE reference = ?", ["success", now, reference]);
-    const reqRow = await queryOne("SELECT * FROM song_requests WHERE id = ?", [requestId]);
-    if (reqRow) {
-      const newTip = (Number(reqRow.tipAmount) || 0) + verifiedAmount;
-      await execute(
-        "UPDATE song_requests SET tipAmount = ?, priority = 1, updatedAt = ? WHERE id = ?",
-        [newTip, now, requestId]
-      );
-      await execute(
-        "UPDATE djs SET totalTipsEarned = totalTipsEarned + ?, availableBalance = availableBalance + ? WHERE id = ?",
-        [verifiedAmount, verifiedAmount, reqRow.djId]
-      );
-      const notifId = `notif-${Date.now().toString(36)}`;
-      await execute(
-        "INSERT INTO notifications (id, djId, type, title, message, song, artist, tipAmount, timestamp, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-        [
-          notifId,
-          reqRow.djId,
-          "tip_confirmed",
-          "\u{1F4B0} VIP Tip Confirmed via Paystack!",
-          `\u20A6${verifiedAmount.toLocaleString()} tip received for "${reqRow.song}" by ${reqRow.artist}`,
-          reqRow.song,
-          reqRow.artist,
-          verifiedAmount,
-          now
-        ]
-      );
-    }
-    return res.json({ success: true, verified: true, amount: verifiedAmount });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.post("/api/payments/webhook", async (req, res) => {
-  try {
-    const signature = req.headers["x-paystack-signature"];
-    const secret = process.env.PAYSTACK_SECRET_KEY;
-    if (secret && !secret.includes("example") && signature) {
-      const hash = import_crypto.default.createHmac("sha512", secret).update(JSON.stringify(req.body)).digest("hex");
-      if (hash !== signature) {
-        return res.status(401).json({ error: "Invalid HMAC signature" });
-      }
-    }
-    const event = req.body;
-    if (event && event.event === "charge.success") {
-      const data = event.data;
-      const ref = data.reference;
-      const amountNaira = Math.round(data.amount / 100);
-      const requestId = data.metadata?.requestId;
-      const djId = data.metadata?.djId || "dj-bama";
-      const now = (/* @__PURE__ */ new Date()).toISOString();
-      await execute("UPDATE payments SET status = ?, paidAt = ? WHERE reference = ?", ["success", now, ref]);
-      if (requestId) {
-        const reqRow = await queryOne("SELECT * FROM song_requests WHERE id = ?", [requestId]);
-        if (reqRow) {
-          const newTip = (Number(reqRow.tipAmount) || 0) + amountNaira;
-          await execute(
-            "UPDATE song_requests SET tipAmount = ?, priority = 1, updatedAt = ? WHERE id = ?",
-            [newTip, now, requestId]
-          );
-          await execute(
-            "UPDATE djs SET totalTipsEarned = totalTipsEarned + ?, availableBalance = availableBalance + ? WHERE id = ?",
-            [amountNaira, amountNaira, djId]
-          );
-        }
-      }
-    }
-    return res.status(200).json({ received: true });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-app.get("/api/payout/banks", async (req, res) => {
-  try {
-    if (process.env.PAYSTACK_SECRET_KEY && !process.env.PAYSTACK_SECRET_KEY.includes("example")) {
-      try {
-        const paystackRes = await fetch("https://api.paystack.co/bank?country=nigeria", {
-          headers: {
-            "Authorization": `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-            "Content-Type": "application/json"
-          }
-        });
-        if (paystackRes.ok) {
-          const data = await paystackRes.json();
-          if (data.status && Array.isArray(data.data)) {
-            const banks = data.data.map((b) => ({
-              name: b.name,
-              code: b.code,
-              slug: b.slug
-            }));
-            return res.json({ success: true, banks });
-          }
-        }
-      } catch (e) {
-      }
-    }
-    return res.json({ success: true, banks: NIGERIAN_BANKS });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.post("/api/payout/resolve-account", async (req, res) => {
-  try {
-    const { accountNumber, bankCode } = req.body;
-    if (!accountNumber || !bankCode) {
-      return res.status(400).json({ success: false, error: "Account number and Bank code are required." });
-    }
-    const cleanAccount = String(accountNumber).trim().replace(/\D/g, "");
-    if (cleanAccount.length !== 10) {
-      return res.status(400).json({ success: false, error: "Nigerian NUBAN account number must be exactly 10 digits." });
-    }
-    if (process.env.PAYSTACK_SECRET_KEY && !process.env.PAYSTACK_SECRET_KEY.includes("example")) {
-      try {
-        const resolveRes = await fetch(
-          `https://api.paystack.co/bank/resolve?account_number=${encodeURIComponent(cleanAccount)}&bank_code=${encodeURIComponent(bankCode)}`,
-          {
-            headers: {
-              "Authorization": `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-              "Content-Type": "application/json"
-            }
-          }
-        );
-        if (resolveRes.ok) {
-          const resolveData = await resolveRes.json();
-          if (resolveData.status && resolveData.data) {
-            return res.json({
-              success: true,
-              accountName: resolveData.data.account_name,
-              accountNumber: resolveData.data.account_number,
-              bankCode
-            });
-          }
-        }
-      } catch (paystackErr) {
-        console.warn("Paystack account resolution fallback:", paystackErr.message);
-      }
-    }
-    const bankObj = NIGERIAN_BANKS.find((b) => b.code === bankCode);
-    const mockResolvedName = "OLUWABAMA ADELEKE (VERIFIED)";
-    return res.json({
-      success: true,
-      accountName: mockResolvedName,
-      accountNumber: cleanAccount,
-      bankName: bankObj?.name || "Guaranty Trust Bank (GTBank)",
-      bankCode
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.post("/api/payout/withdraw", async (req, res) => {
-  try {
-    const { djId, amount, bankName, accountNumber, accountName, bankCode } = req.body;
-    const withdrawAmount = Number(amount);
-    if (!djId || isNaN(withdrawAmount) || withdrawAmount <= 0) {
-      return res.status(400).json({ success: false, error: "Valid DJ ID and positive withdrawal amount are required." });
-    }
-    if (withdrawAmount < 1e3) {
-      return res.status(400).json({ success: false, error: "Minimum instant withdrawal amount is \u20A61,000." });
-    }
-    const dj = await queryOne("SELECT * FROM djs WHERE id = ?", [djId]);
-    if (!dj) {
-      return res.status(404).json({ success: false, error: "DJ profile not found." });
-    }
-    const availableBalance = Number(dj.availableBalance) || 0;
-    if (withdrawAmount > availableBalance) {
-      return res.status(400).json({
-        success: false,
-        error: `Insufficient balance. Available: \u20A6${availableBalance.toLocaleString()}, Requested: \u20A6${withdrawAmount.toLocaleString()}`
-      });
-    }
-    const targetBankName = bankName || dj.bankName || "Guaranty Trust Bank (GTBank)";
-    const targetAccountNumber = accountNumber || dj.accountNumber || "0124892019";
-    const targetAccountName = accountName || dj.accountName || dj.name;
-    const targetBankCode = bankCode || dj.bankCode || "058";
-    if (!targetAccountNumber || targetAccountNumber.length < 10) {
-      return res.status(400).json({ success: false, error: "Please configure a valid 10-digit settlement account number." });
-    }
-    const transferFee = 25;
-    const netAmount = Math.max(0, withdrawAmount - transferFee);
-    const payoutId = `pout-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
-    const payoutRef = `WD-VYBE-${Date.now().toString(36).toUpperCase()}-${Math.floor(1e3 + Math.random() * 9e3)}`;
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    let paystackTransferCode = `TRF_${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-    let status = "success";
-    if (process.env.PAYSTACK_SECRET_KEY && !process.env.PAYSTACK_SECRET_KEY.includes("example")) {
-      try {
-        const recipientRes = await fetch("https://api.paystack.co/transferrecipient", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            type: "nuban",
-            name: targetAccountName,
-            account_number: targetAccountNumber,
-            bank_code: targetBankCode,
-            currency: "NGN",
-            description: `VybeCheck DJ Payout - ${dj.stageName}`
-          })
-        });
-        if (recipientRes.ok) {
-          const recipData = await recipientRes.json();
-          const recipientCode = recipData.data?.recipient_code;
-          if (recipientCode) {
-            const transferRes = await fetch("https://api.paystack.co/transfer", {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({
-                source: "balance",
-                amount: Math.round(netAmount * 100),
-                // amount in kobo
-                recipient: recipientCode,
-                reason: `VybeCheck DJ Tip Payout - ${dj.stageName}`,
-                reference: payoutRef
-              })
-            });
-            if (transferRes.ok) {
-              const transferData = await transferRes.json();
-              if (transferData.status && transferData.data) {
-                paystackTransferCode = transferData.data.transfer_code || paystackTransferCode;
-                status = transferData.data.status === "failed" ? "failed" : "success";
-              }
-            }
-          }
-        }
-      } catch (paystackErr) {
-        console.warn("Paystack live transfer notice:", paystackErr.message);
-      }
-    }
-    await execute(
-      "UPDATE djs SET availableBalance = availableBalance - ?, totalWithdrawn = totalWithdrawn + ? WHERE id = ?",
-      [withdrawAmount, withdrawAmount, djId]
-    );
-    await execute(
-      `INSERT INTO payouts (
-        id, djId, reference, amount, fee, netAmount, currency, bankName, accountNumber, accountName, bankCode, paystackTransferCode, status, createdAt, processedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        payoutId,
-        djId,
-        payoutRef,
-        withdrawAmount,
-        transferFee,
-        netAmount,
-        "NGN",
-        targetBankName,
-        targetAccountNumber,
-        targetAccountName,
-        targetBankCode,
-        paystackTransferCode,
-        status,
-        now,
-        now
-      ]
-    );
-    const notifId = `notif-${Date.now().toString(36)}`;
-    await execute(
-      "INSERT INTO notifications (id, djId, type, title, message, tipAmount, timestamp, read) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-      [
-        notifId,
-        djId,
-        "system",
-        "\u26A1 Instant Payout Dispatched!",
-        `\u20A6${netAmount.toLocaleString()} was successfully transferred to ${targetBankName} (${targetAccountNumber}). Ref: ${payoutRef}`,
-        netAmount,
-        now
-      ]
-    );
-    const updatedDj = await queryOne("SELECT * FROM djs WHERE id = ?", [djId]);
-    return res.json({
-      success: true,
-      payout: {
-        id: payoutId,
-        reference: payoutRef,
-        amount: withdrawAmount,
-        fee: transferFee,
-        netAmount,
-        bankName: targetBankName,
-        accountNumber: targetAccountNumber,
-        accountName: targetAccountName,
-        status,
-        createdAt: now
-      },
-      wallet: {
-        availableBalance: Number(updatedDj.availableBalance) || 0,
-        totalWithdrawn: Number(updatedDj.totalWithdrawn) || 0,
-        totalTipsEarned: Number(updatedDj.totalTipsEarned) || 0
-      }
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.get("/api/payout/history/:djId", async (req, res) => {
-  try {
-    const rows = await queryAll("SELECT * FROM payouts WHERE djId = ? ORDER BY createdAt DESC", [req.params.djId]);
-    return res.json({
-      success: true,
-      payouts: rows.map((p) => ({
-        ...p,
-        amount: Number(p.amount) || 0,
-        fee: Number(p.fee) || 0,
-        netAmount: Number(p.netAmount) || 0
-      }))
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.get("/api/payout/wallet/:djId", async (req, res) => {
-  try {
-    const dj = await queryOne("SELECT * FROM djs WHERE id = ?", [req.params.djId]);
-    if (!dj) {
-      return res.status(404).json({ success: false, error: "DJ not found" });
-    }
-    const payouts = await queryAll("SELECT * FROM payouts WHERE djId = ? ORDER BY createdAt DESC LIMIT 20", [req.params.djId]);
-    return res.json({
-      success: true,
-      wallet: {
-        availableBalance: Number(dj.availableBalance) || 0,
-        totalWithdrawn: Number(dj.totalWithdrawn) || 0,
-        totalTipsEarned: Number(dj.totalTipsEarned) || 0,
-        payouts: payouts.map((p) => ({
-          ...p,
-          amount: Number(p.amount) || 0,
-          fee: Number(p.fee) || 0,
-          netAmount: Number(p.netAmount) || 0
-        }))
-      }
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.get("/api/notifications/:djId", async (req, res) => {
-  try {
-    const rows = await queryAll("SELECT * FROM notifications WHERE djId = ? ORDER BY timestamp DESC LIMIT 30", [req.params.djId]);
-    return res.json({
-      success: true,
-      notifications: rows.map((n) => ({
-        ...n,
-        read: Boolean(n.read),
-        tipAmount: n.tipAmount ? Number(n.tipAmount) : void 0
-      }))
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.patch("/api/notifications/:id/read", async (req, res) => {
-  try {
-    await execute("UPDATE notifications SET read = 1 WHERE id = ?", [req.params.id]);
-    return res.json({ success: true });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.get("/api/history/:requestId", async (req, res) => {
-  try {
-    const rows = await queryAll("SELECT * FROM queue_history WHERE requestId = ? ORDER BY createdAt ASC", [req.params.requestId]);
-    return res.json({ success: true, history: rows });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", database: "sqlite3 (vybecheck.sqlite)", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
-});
+app.get("/api/health", (_req, res) => res.json({ status: "ok", database: "Cloud Firestore" }));
+app.use("/api", (_req, res) => res.status(404).json({ success: false, error: "Endpoint not found." }));
+var app_default = app;
+
+// server.ts
+var import_express3 = __toESM(require("express"), 1);
 async function start() {
   if (process.env.NODE_ENV !== "production") {
-    const vite = await (0, import_vite.createServer)({
-      server: { middlewareMode: true },
-      appType: "spa"
-    });
-    app.use(vite.middlewares);
+    const vite = await (0, import_vite.createServer)({ server: { middlewareMode: true }, appType: "spa" });
+    app_default.use(vite.middlewares);
   } else {
-    const distPath = import_path2.default.join(process.cwd(), "dist");
-    app.use(import_express.default.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(import_path2.default.join(distPath, "index.html"));
-    });
+    const dist = import_node_path.default.join(process.cwd(), "dist");
+    app_default.use(import_express3.default.static(dist));
+    app_default.get("*", (_req, res) => res.sendFile(import_node_path.default.join(dist, "index.html")));
   }
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`VybeCheck Server running on http://0.0.0.0:${PORT} with SQLite database`);
-  });
+  const port = Number(process.env.PORT || 3e3);
+  app_default.listen(port, "0.0.0.0", () => console.log(`VybeCheck running at http://localhost:${port} with Firebase`));
 }
-start();
+void start();
 //# sourceMappingURL=server.cjs.map

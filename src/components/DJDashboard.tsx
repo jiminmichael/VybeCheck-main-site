@@ -37,7 +37,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
 }) => {
   const [currentEvent, setCurrentEvent] = useState<EventItem>(store.getCurrentEvent());
   const [currentDJ, setCurrentDJ] = useState<DJProfile>(store.getCurrentDJ());
-  const [events, setEvents] = useState<EventItem[]>(store.getEvents());
+  const [events, setEvents] = useState<EventItem[]>(store.getEvents().filter(event => event.djId === store.getCurrentDJ()?.id));
   const [requests, setRequests] = useState<SongRequestItem[]>(store.getRequests());
   const [soundEnabled, setSoundEnabled] = useState(soundEngine.isEnabled());
   const [isWithdrawalOpen, setIsWithdrawalOpen] = useState(false);
@@ -56,7 +56,7 @@ export const DJDashboard: React.FC<DJDashboardProps> = ({
     const update = () => {
       setCurrentEvent(store.getCurrentEvent());
       setCurrentDJ(store.getCurrentDJ());
-      setEvents(store.getEvents());
+      setEvents(store.getEvents().filter(event => event.djId === store.getCurrentDJ()?.id));
       setRequests(store.getRequests());
     };
 
