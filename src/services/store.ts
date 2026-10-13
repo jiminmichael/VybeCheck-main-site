@@ -1,3 +1,4 @@
+import { resolveEventId } from './eventResolution';
 import { trackEvent, trackPayment } from './analytics';
 import { saveTrackingToken } from './tracking';
 import { onAuthStateChanged, createUserWithEmailAndPassword, GoogleAuthProvider, GithubAuthProvider, OAuthProvider, signInWithPopup, signInWithEmailAndPassword, signOut, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, User } from 'firebase/auth';
@@ -16,6 +17,7 @@ class Store {
   private djs: DJProfile[] = [];
   private ownDJ: DJProfile | undefined;
   private requests: SongRequestItem[] = [];
+  private trackedRequests = new Map<string, SongRequestItem>();
   private notifications: DJNotification[] = [];
   private payouts: PayoutItem[] = [];
   private currentEventId = '';
@@ -124,11 +126,7 @@ class Store {
   }
 
   private resolveEvent() {
-    const publicDJ = this.djs.find(d => d.handle === this.requestedSlug);
-    const linked = this.events.find(e => e.slug === this.requestedSlug) || (publicDJ && this.events.find(e => e.djId === publicDJ.id));
-    if (linked) this.currentEventId = linked.id;
-    else if (this.requestedSlug) this.currentEventId = '';
-    else if (!this.events.some(e => e.id === this.currentEventId)) this.currentEventId = this.events.find(e => e.djId === this.ownDJ?.id)?.id || this.events[0]?.id || '';
+    this.currentEventId = resolveEventId(this.events, this.djs, this.requestedSlug, this.currentEventId, this.ownDJ?.id);
     this.watchRequests();
   }
 
@@ -170,7 +168,7 @@ class Store {
       const dj = await this.finishSignIn(result.user);
       return { success: true, dj };
     } catch (error) { return { success: false, error: errorMessage(error) }; }
-    finally { this.authOperation = false; }
+    finally { this.authOperation = false; this.authReady = true; this.notify(); }
   }
   public async loginWithSocial(provider: 'google' | 'spotify' | 'apple' | 'github', extra?: { stageName?: string; name?: string; email?: string }) {
     this.authOperation = true;
@@ -182,7 +180,7 @@ class Store {
       const dj = await this.finishSignIn(result.user, extra?.stageName ? { stageName: extra.stageName } : {});
       return { success: true, dj };
     } catch (error) { return { success: false, error: errorMessage(error) }; }
-    finally { this.authOperation = false; }
+    finally { this.authOperation = false; this.authReady = true; this.notify(); }
   }
   public async registerDJ(data: Registration) {
     this.authOperation = true;
@@ -196,14 +194,14 @@ class Store {
       const dj = await this.finishSignIn(user, profile);
       return { success: true, dj };
     } catch (error) { return { success: false, error: errorMessage(error) }; }
-    finally { this.authOperation = false; }
+    finally { this.authOperation = false; this.authReady = true; this.notify(); }
   }
   public signupDJ(data: Registration) { return this.registerDJ(data); }
   public async logoutDJ() {
     this.authOperation = true;
     try { await signOut(auth); this.clearPrivateState(); }
     catch (error) { this.reportError(error); }
-    finally { this.authOperation = false; }
+    finally { this.authOperation = false; this.authReady = true; this.notify(); }
   }
   public async requestMagicLink(email: string) {
     try {
@@ -226,7 +224,7 @@ class Store {
       window.history.replaceState(null, '', `${window.location.pathname}#profile`);
       return { success: true, dj };
     } catch (error) { return { success: false, error: errorMessage(error) }; }
-    finally { this.authOperation = false; }
+    finally { this.authOperation = false; this.authReady = true; this.notify(); }
   }
 
   public async updateDJProfile(id: string, updates: Partial<DJProfile>) {
@@ -255,10 +253,16 @@ class Store {
   }
   public getRequests(eventId?: string) { return this.requests.filter(r => r.eventId === (eventId || this.currentEventId)); }
   public getAllRequests() { return this.requests; }
-  public getRequestByToken(token: string) { return this.requests.find(r => r.trackingToken === token || r.id === token); }
+  public getRequestByToken(token: string) {
+    const tracked = this.trackedRequests.get(token);
+    const live = this.requests.find(r => r.trackingToken === token || r.id === token);
+    if (!live) return tracked;
+    return tracked && tracked.updatedAt >= live.updatedAt ? tracked : { ...live, queueRank: tracked?.queueRank };
+  }
   public async trackRequest(token: string) {
     const result = await api(`/api/requests/track/${encodeURIComponent(token)}`);
-    this.requests = [...this.requests.filter(r => r.id !== result.request.id), result.request];
+    this.trackedRequests.set(result.request.trackingToken, result.request);
+    this.trackedRequests.set(result.request.id, result.request);
     this.notify();
     return result.request as SongRequestItem;
   }
@@ -309,10 +313,10 @@ class Store {
       const request = this.getRequestByToken(requestIdOrToken);
       if (!request) return false;
       const result = await api('/api/payments/verify', { reference, requestId: request.id });
-      await this.trackRequest(request.trackingToken);
+      const confirmedRequest = await this.trackRequest(request.trackingToken);
       soundEngine.play('tipReceived');
       trackPayment(reference, result.amount);
-      return { amount: result.amount, reference, priority: this.getRequestByToken(request.id)?.priority === true };
+      return { amount: result.amount, reference, priority: confirmedRequest.priority === true };
     } catch { return false; }
   }
   public verifyTipPayment(token: string, amount: number, reference?: string) { return reference ? this.verifyPayment(reference, token, amount) : Promise.resolve(false); }

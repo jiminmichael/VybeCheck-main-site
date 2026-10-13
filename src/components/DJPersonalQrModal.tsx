@@ -1,3 +1,4 @@
+import { store } from '../services/store';
 import React, { useState, useEffect } from 'react';
 import { 
   QrCode, 
@@ -36,6 +37,8 @@ export const DJPersonalQrModal: React.FC<DJPersonalQrModalProps> = ({ dj, onClos
     QR_THEMES.find((t) => t.id === dj.qrTheme) || QR_THEMES[0]
   );
   const [qrDataUrl, setQrDataUrl] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const [savingTheme, setSavingTheme] = useState(false);
   const [copied, setCopied] = useState(false);
   const [printMode, setPrintMode] = useState(false);
   const [fullProjectorMode, setFullProjectorMode] = useState(false);
@@ -57,9 +60,10 @@ export const DJPersonalQrModal: React.FC<DJPersonalQrModalProps> = ({ dj, onClos
       .catch((err) => console.error('QR Generation failed:', err));
   }, [personalRequestUrl, selectedTheme]);
 
-  const handleCopyLink = () => {
+  const handleCopyLink = async () => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(personalRequestUrl);
+      try { await navigator.clipboard.writeText(personalRequestUrl); }
+      catch { setSaveError('Could not copy the link. Select and copy the displayed URL.'); return; }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -72,6 +76,12 @@ export const DJPersonalQrModal: React.FC<DJPersonalQrModalProps> = ({ dj, onClos
     a.download = `VybeCheck_QR_${dj.handle}_${selectedTheme.id}.png`;
     a.click();
   };
+
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') { if (fullProjectorMode) setFullProjectorMode(false); else onClose(); } };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [fullProjectorMode, onClose]);
 
   const handlePrintFlyer = () => {
     window.print();
@@ -133,6 +143,7 @@ export const DJPersonalQrModal: React.FC<DJPersonalQrModalProps> = ({ dj, onClos
           <X className="w-4 h-4" />
         </button>
 
+        {saveError && <p role="alert" className="text-rose-300">{saveError}</p>}
         {/* Modal Header */}
         <div className="flex items-center gap-3.5 mb-6">
           <div className="w-12 h-12 rounded-2xl overflow-hidden border-2 border-cyan-400/60 flex-shrink-0">
@@ -184,7 +195,14 @@ export const DJPersonalQrModal: React.FC<DJPersonalQrModalProps> = ({ dj, onClos
                   <button
                     key={theme.id}
                     type="button"
-                    onClick={() => setSelectedTheme(theme)}
+                    disabled={savingTheme}
+                    onClick={async () => {
+                      setSavingTheme(true); setSaveError('');
+                      const result = await store.updateDJProfile(dj.id, { qrTheme: theme.id as DJProfile['qrTheme'] });
+                      if (result.success) setSelectedTheme(theme);
+                      else setSaveError(result.error || 'Could not save QR theme.');
+                      setSavingTheme(false);
+                    }}
                     className={`p-2 rounded-xl border text-xs font-bold text-left transition-all flex items-center justify-between ${
                       selectedTheme.id === theme.id
                         ? `${theme.badge} shadow-md`

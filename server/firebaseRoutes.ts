@@ -387,7 +387,7 @@ firebaseRoutes.post('/payout/withdraw', route(async (req, res) => {
     }
     const dj = (await tx.get(djRef)).data();
     const amount = amountKobo / 100;
-    if (!dj || dj.availableBalance < amount) throw new HttpError(400, 'Insufficient wallet balance.');
+    if (!dj || !Number.isFinite(dj.availableBalance) || dj.availableBalance < amount) throw new HttpError(400, 'Insufficient wallet balance.');
     if (dj.pendingPayoutReference) throw new HttpError(409, 'Your previous payout is awaiting confirmation. Check your payout history before withdrawing again.');
     const payout = { id: reference, reference, djId: user.uid, amount, fee: 25, netAmount: amount - 25, currency: 'NGN', bankCode, bankName, accountNumber, accountName: '', status: 'processing', createdAt: now() };
     tx.create(ref, payout);

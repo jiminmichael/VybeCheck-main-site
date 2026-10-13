@@ -1,5 +1,35 @@
 # Feature audit
 
+## Repair status — 2026-10-13
+
+All 17 findings below have corresponding local code changes. The original findings are retained as the baseline; their line numbers refer to the pre-fix files. Production deployment and live integration acceptance are separate from these local checks.
+
+| Finding | Implemented change |
+| --- | --- |
+| 1. Wallet | Zero available balance is displayed as zero; earned totals are separate. |
+| 2. Bank details | Bank code is saved, dummy account values removed, and saved account/bank details are verified server-side. |
+| 3. Withdrawals | Definitive rejections release reservations; uncertain outcomes remain reserved. Added owner-authorized verification, same-reference recovery after provider 404, scheduled verification, and an operator-only OTP CLI. |
+| 4. Checkout | Saved checkout retains its amount, resumed checkout explains the fixed amount, and receipts display the amount verified by the server. Invalid cached checkout links are rejected. |
+| 5. Auto VIP | Settlement honors the current event setting and preserves existing VIP status. |
+| 6. Queue | Shared order for dashboard, live screen, Play Next, and movement controls. Filters do not change playback; accepted requests precede pending requests, VIP first within each group. |
+| 7. DJ links | Unresolved explicit handles/slugs produce an unavailable state rather than another DJ's form; handle resolution reruns as data arrives. |
+| 8. Tracking | Local persistence and shareable tracking routes restore the request; no automatic selection of another visitor's request. Tracked results are cached separately from public snapshots. |
+| 9. Rejections | Reason is validated, stored on the request and history, and shown to the customer. |
+| 10. Payout history | Profile and open withdrawal receipt subscribe to current payout data; history provides status checks and recovery. |
+| 11. Routing | Auth readiness gates protected routes; navigation updates the hash and supports reload/back. |
+| 12. Audio parsing | Validates codec-bearing audio data URLs and preserves format/filename. |
+| 13. Audio examples | Explicitly labeled catalog examples; no invented confidence or audio-identification metadata. |
+| 14. Recognition deployment | Functions binds ACRCloud secrets, `.env.example` and deployment instructions updated. Cloud secret provisioning/deployment remains required. |
+| 15. UI controls | QR Studio is reachable and saves themes; public-queue and tips switches are visible. Guest tipping honors the switch. Private DJ queries include the owner constraint. |
+| 16. Discovery | Service and endpoint renamed to suggested tracks, removing the unsupported trending claim. |
+| 17. Analytics | Central configurable tag initialization, explicit screen views, request/login events, and verified purchase events. Current Firebase property remains the default, with an override for the originally requested property. GA4 history-based auto-pageview settings must be checked after deployment. |
+
+Validation: TypeScript checks, frontend/server builds, and Functions build pass. Tests: 26 passed, 1 emulator test skipped, 0 failures. Local HTTP smoke checks returned 200 for health, 400 for malformed audio, and 401 for unauthenticated payout reconciliation/recovery. No real charges, withdrawals, OTP approvals, or production writes were performed. The emulator rules test remains skipped in this environment. Full browser/social-login, microphone, payment-provider, and deployed-service acceptance still requires live testing.
+
+See [deployment and operator instructions](FIREBASE_SETUP.md#feature-repair-deployment-checklist). The frontend still emits Vite's existing large-chunk warning; build output is successful.
+
+## Original audit
+
 Date: 2026-10-13. Scope: frontend feature wiring, store behavior, server routes, Firebase rules/configuration, builds, existing tests, and read-only public Firestore probes. No real charges, withdrawals, or production data changes were performed. Findings below are code-confirmed unless marked as needing live verification.
 
 ## Highest priority

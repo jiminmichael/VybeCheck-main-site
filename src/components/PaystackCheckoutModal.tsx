@@ -1,3 +1,4 @@
+import { parseSavedCheckout, SavedCheckout } from '../services/checkout';
 import React, { useState } from 'react';
 import { api } from '../services/firebase';
 import { 
@@ -25,8 +26,8 @@ export const PaystackCheckoutModal: React.FC<PaystackCheckoutModalProps> = ({
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [receipt, setReceipt] = useState<{ amount: number; priority: boolean } | null>(null);
 
-  const [checkout, setCheckout] = useState<{ reference: string; authorizationUrl: string; amount?: number } | null>(() => {
-    try { return JSON.parse(sessionStorage.getItem(`checkout-${request.id}`) || 'null'); } catch { return null; }
+  const [checkout, setCheckout] = useState<SavedCheckout | null>(() => {
+    try { return parseSavedCheckout(sessionStorage.getItem(`checkout-${request.id}`)); } catch { return null; }
   });
   const [error, setError] = useState('');
 
@@ -40,7 +41,7 @@ export const PaystackCheckoutModal: React.FC<PaystackCheckoutModalProps> = ({
     setIsProcessing(false);
     setPaymentSuccess(true);
     setReceipt(verified);
-    sessionStorage.removeItem(`checkout-${request.id}`);
+    try { sessionStorage.removeItem(`checkout-${request.id}`); } catch { /* Receipt remains available without browser storage. */ }
     
     confetti({
       particleCount: 100,
@@ -62,7 +63,7 @@ export const PaystackCheckoutModal: React.FC<PaystackCheckoutModalProps> = ({
     try {
       const result = await api('/api/payments/initialize', { requestId: request.id, amount: tipAmount, customerEmail: email.trim() });
       const next = { reference: result.reference, authorizationUrl: result.authorizationUrl, amount: tipAmount };
-      sessionStorage.setItem(`checkout-${request.id}`, JSON.stringify(next));
+      try { sessionStorage.setItem(`checkout-${request.id}`, JSON.stringify(next)); } catch { /* Checkout works for this visit even when storage is blocked. */ }
       setCheckout(next);
     } catch (error) { setError(error instanceof Error ? error.message : 'Could not start payment.'); }
     finally { setIsProcessing(false); }

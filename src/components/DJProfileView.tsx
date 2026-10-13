@@ -721,8 +721,6 @@ export const DJProfileView: React.FC<DJProfileViewProps> = ({
                         catch (error) { setPayoutError(error instanceof Error ? error.message : 'Unable to recover payout.'); }
                         finally { setCheckingPayout(null); }
                       }}>Recover missing transfer</button>}
-                      <span>
-                      </span>
                     </div>
                     <span className="text-[10px] text-[#8F8C88]">
                       {new Date(p.createdAt).toLocaleDateString()}

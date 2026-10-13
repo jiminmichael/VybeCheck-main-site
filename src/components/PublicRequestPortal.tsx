@@ -538,6 +538,7 @@ export const PublicRequestPortal: React.FC<PublicRequestPortalProps> = ({
             {!currentEvent?.tipsEnabled ? 'Tips are paused' : currentEvent.autoPriority ? 'Make it a Priority' : 'Tip the DJ'}
           </button>
 
+          {errorMessage && <p role="alert" className="text-sm text-rose-300">{errorMessage}</p>}
           {/* PRIORITY & TIP SECTION */}
           {priorityOpen && currentEvent?.tipsEnabled && (
             <div className="mt-8 pt-8 border-t border-[rgba(255,255,255,0.08)] text-left">

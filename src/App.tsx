@@ -48,6 +48,7 @@ export default function App() {
 
   const [notifications, setNotifications] = useState<DJNotification[]>(store.getNotifications());
   const [currentDJ, setCurrentDJ] = useState<DJProfile | undefined>(store.isAuthenticatedDJ() ? store.getCurrentDJ() : undefined);
+  const [authReady, setAuthReady] = useState(store.isAuthReady());
   const [backendReady, setBackendReady] = useState<boolean>(store.isReady());
   const [backendError, setBackendError] = useState<string | null>(store.getInitializationError());
 
@@ -100,6 +101,7 @@ export default function App() {
       setNotifications([...store.getNotifications()]);
       setCurrentDJ(store.isAuthenticatedDJ() ? store.getCurrentDJ() : undefined);
       if (!store.isAuthenticatedDJ()) setCurrentView(view => view === 'dj_dashboard' || view === 'dj_profile' ? 'public_request' : view);
+      setAuthReady(store.isAuthReady());
       setBackendReady(store.isReady());
       setBackendError(store.getInitializationError());
     });
@@ -153,8 +155,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (backendReady && store.isAuthReady()) trackScreen(currentView);
-  }, [currentView, backendReady, currentDJ]);
+    if (backendReady && authReady) trackScreen(currentView);
+  }, [currentView, backendReady, authReady]);
 
   const unreadNotifications = notifications.filter((n) => !n.read).slice(0, 3);
 

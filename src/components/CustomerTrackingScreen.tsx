@@ -54,8 +54,9 @@ export const CustomerTrackingScreen: React.FC<CustomerTrackingScreenProps> = ({
 
   useEffect(() => {
     if (!activeToken) return;
+    setRequest(store.getRequestByToken(activeToken));
     let cancelled = false;
-    const refresh = () => store.trackRequest(activeToken).then(found => { if (!cancelled) setRequest(found); }).catch(() => {});
+    const refresh = () => store.trackRequest(activeToken).then(found => { if (!cancelled) setRequest(found); }).catch(() => { if (!cancelled) setRequest(undefined); });
     void refresh();
     const timer = setInterval(refresh, 5000);
     return () => { cancelled = true; clearInterval(timer); };
