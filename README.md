@@ -9,8 +9,6 @@ npm install
 npm run dev
 ```
 
-See [Auth0 social sign-in setup](AUTH0_SETUP.md) to enable Auth0 for Google while keeping Firebase data and sessions.
-
 See [Firebase setup and migration](FIREBASE_SETUP.md) for service enablement, server credentials, deployment, emulator testing, and importing existing data.
 
 ```sh
