@@ -11,5 +11,10 @@
     "firebase-functions": "^7.4.0",
     "@google/genai": "^2.4.0",
     "dotenv": "^17.2.3"
+  },
+  "overrides": {
+    "jwks-rsa": {
+      "jose": "5.10.0"
+    }
   }
 }

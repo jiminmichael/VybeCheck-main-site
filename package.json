@@ -48,5 +48,10 @@
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
     "sql.js": "^1.14.2"
+  },
+  "overrides": {
+    "jwks-rsa": {
+      "jose": "5.10.0"
+    }
   }
 }

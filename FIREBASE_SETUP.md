@@ -36,6 +36,10 @@ Copy the values you need from `.env.example` into `.env`. For local/Vercel Admin
 npm run dev
 ```
 
+For this Vercel deployment, set `FIREBASE_PROJECT_ID=vybecheck-6a8b7` and `FIREBASE_SERVICE_ACCOUNT_JSON` to the complete service-account JSON in **Project Settings → Environment Variables**, with Production selected. A `GOOGLE_APPLICATION_CREDENTIALS` path under `/Users/mac/` only exists on your Mac; remove that variable from Vercel. Individual variables such as `private_key` and `client_email` are not used by the server. Keep Admin credentials out of all `VITE_` variables. Redeploy after updating environment variables.
+
+Both package manifests override only the `jose` dependency inside `jwks-rsa` to version `5.10.0`, which supports CommonJS. This avoids `ERR_REQUIRE_ESM` when the Vercel runtime loads Firebase Admin without native `require(esm)` support. Commit both lockfiles along with the manifests; the server startup tests check this runtime restriction and RSA signing-key compatibility.
+
 The Vercel compatibility entrypoint uses the same API as Firebase Functions. Firebase Hosting is the supplied destination for the full migration; `vercel.json` remains usable during cutover.
 
 For isolated testing, start Auth, Firestore and Storage emulators using the CLI. A supported Java runtime is needed for Firestore/Storage emulators. Use the commented emulator environment variables in `.env.example`; restart Vite after changing them. Do not set emulator variables in production.
