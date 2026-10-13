@@ -1,3 +1,4 @@
+import { usesAuth0Social, signInWithAuth0Google, clearAuth0Session } from './auth0';
 import { resolveEventId } from './eventResolution';
 import { trackEvent, trackPayment } from './analytics';
 import { saveTrackingToken } from './tracking';
@@ -176,7 +177,9 @@ class Store {
     try {
       if (provider === 'spotify') throw new Error('Please use Google or email to sign in.');
       const authProvider = provider === 'google' ? new GoogleAuthProvider() : provider === 'github' ? new GithubAuthProvider() : new OAuthProvider('apple.com');
-      const result = await signInWithPopup(auth, authProvider);
+      const result = provider === 'google' && usesAuth0Social
+        ? await signInWithAuth0Google()
+        : await signInWithPopup(auth, authProvider);
       const dj = await this.finishSignIn(result.user, extra?.stageName ? { stageName: extra.stageName } : {});
       return { success: true, dj };
     } catch (error) { return { success: false, error: errorMessage(error) }; }
@@ -199,7 +202,7 @@ class Store {
   public signupDJ(data: Registration) { return this.registerDJ(data); }
   public async logoutDJ() {
     this.authOperation = true;
-    try { await signOut(auth); this.clearPrivateState(); }
+    try { await signOut(auth); this.clearPrivateState(); if (usesAuth0Social) await clearAuth0Session(); }
     catch (error) { this.reportError(error); }
     finally { this.authOperation = false; this.authReady = true; this.notify(); }
   }

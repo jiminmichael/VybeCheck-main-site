@@ -1,3 +1,4 @@
+import { exchangeAuth0Token } from './auth0.js';
 import { activeQueue } from '../src/services/queue.js';
 import type { SongRequestItem } from '../src/types.js';
 import { Router, type Request, type Response, type NextFunction } from 'express';
@@ -53,6 +54,13 @@ function initialEvent(dj: any, id: string) {
     requestsEnabled: true, publicQueueEnabled: true, autoPriority: true, tipsEnabled: true,
     minTip: dj.minTipAmount, maxTip: 1_000_000 };
 }
+
+firebaseRoutes.post('/auth/auth0/exchange', route(async (req, res) => {
+  const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+  if (!token) throw new HttpError(401, 'Sign in with Google to continue.');
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(await exchangeAuth0Token(token));
+}));
 
 firebaseRoutes.post('/auth/profile', route(async (req, res) => {
   const user = await identity(req);
