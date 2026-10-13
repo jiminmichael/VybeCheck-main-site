@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import type { DecodedIdToken } from 'firebase-admin/auth';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminAuth, firestore } from './firebase.js';
-import { tokenVerificationError } from './authErrors.js';
+import { credentialDiagnostic, tokenVerificationError } from './authErrors.js';
 import { HttpError, apiErrorResponse, text, documentId, amountInKobo, profilePatch, publicProfile, validateVerifiedPayment } from './domain.js';
 
 export const firebaseRoutes = Router();
@@ -17,7 +17,7 @@ async function identity(req: Request): Promise<DecodedIdToken> {
   try { return await adminAuth().verifyIdToken(token, true); }
   catch (error) {
     // Log a diagnostic code without exposing tokens or credential contents.
-    console.error('Firebase token verification failed:', (error as { code?: string })?.code || 'unknown', 'project:', process.env.FIREBASE_PROJECT_ID || 'vybecheck-6a8b7');
+    console.error('Firebase token verification failed:', (error as { code?: string })?.code || 'unknown', 'project:', process.env.FIREBASE_PROJECT_ID || 'vybecheck-6a8b7', 'reason:', credentialDiagnostic(error), 'credentialSource:', process.env.FIREBASE_SERVICE_ACCOUNT_JSON ? 'json-env' : process.env.GOOGLE_APPLICATION_CREDENTIALS ? 'file' : 'application-default');
     throw tokenVerificationError(error);
   }
 }
