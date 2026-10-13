@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import type { DecodedIdToken } from 'firebase-admin/auth';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminAuth, firestore } from './firebase.js';
+import { tokenVerificationError } from './authErrors.js';
 import { HttpError, apiErrorResponse, text, documentId, amountInKobo, profilePatch, publicProfile, validateVerifiedPayment } from './domain.js';
 
 export const firebaseRoutes = Router();
@@ -14,7 +15,11 @@ async function identity(req: Request): Promise<DecodedIdToken> {
   const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
   if (!token) throw new HttpError(401, 'Sign in to continue.');
   try { return await adminAuth().verifyIdToken(token, true); }
-  catch { throw new HttpError(401, 'Your session expired. Please sign in again.'); }
+  catch (error) {
+    // Log a diagnostic code without exposing tokens or credential contents.
+    console.error('Firebase token verification failed:', (error as { code?: string })?.code || 'unknown', 'project:', process.env.FIREBASE_PROJECT_ID || 'vybecheck-6a8b7');
+    throw tokenVerificationError(error);
+  }
 }
 async function owned(req: Request, collection: string, id: string) {
   const user = await identity(req);
