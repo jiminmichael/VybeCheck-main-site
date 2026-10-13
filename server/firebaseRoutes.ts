@@ -1,11 +1,11 @@
-import { activeQueue } from '../src/services/queue';
-import type { SongRequestItem } from '../src/types';
-import { Router, Request, Response, NextFunction } from 'express';
+import { activeQueue } from '../src/services/queue.js';
+import type { SongRequestItem } from '../src/types.js';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import crypto from 'node:crypto';
-import { DecodedIdToken } from 'firebase-admin/auth';
+import type { DecodedIdToken } from 'firebase-admin/auth';
 import { FieldValue } from 'firebase-admin/firestore';
-import { adminAuth, firestore } from './firebase';
-import { HttpError, apiErrorResponse, text, documentId, amountInKobo, profilePatch, publicProfile, validateVerifiedPayment } from './domain';
+import { adminAuth, firestore } from './firebase.js';
+import { HttpError, apiErrorResponse, text, documentId, amountInKobo, profilePatch, publicProfile, validateVerifiedPayment } from './domain.js';
 
 export const firebaseRoutes = Router();
 const now = () => new Date().toISOString();

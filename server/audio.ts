@@ -1,4 +1,4 @@
-import { HttpError } from './domain';
+import { HttpError } from './domain.js';
 
 export function decodeAudioDataUrl(value: unknown) {
   if (typeof value !== 'string') throw new HttpError(400, 'Upload a valid audio recording.');

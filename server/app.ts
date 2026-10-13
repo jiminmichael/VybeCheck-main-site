@@ -1,10 +1,10 @@
 import crypto from 'node:crypto';
 import express from 'express';
 import type { Request, Response } from 'express';
-import { decodeAudioDataUrl } from './audio';
-import { HttpError } from './domain';
+import { decodeAudioDataUrl } from './audio.js';
+import { HttpError } from './domain.js';
 import 'dotenv/config';
-import { firebaseRoutes } from './firebaseRoutes';
+import { firebaseRoutes } from './firebaseRoutes.js';
 
 const app = express();
 app.use(express.json({ limit: '25mb', verify: (req, _res, buffer) => { (req as any).rawBody = buffer; } }));
